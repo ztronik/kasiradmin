@@ -43,6 +43,11 @@
                 transform: translateX(0);
             }
         }
+        /* Mobile: kurangi padding content-area agar POS lebih luas */
+        @media (max-width: 767px) {
+            #content-area { padding: 0.4rem !important; }
+            html { font-size: 13px; }
+        }
         @keyframes slideUp {
             from { opacity: 0; transform: translateY(20px); }
             to   { opacity: 1; transform: translateY(0); }
@@ -997,6 +1002,7 @@
                     break;
                 case 'Penjualan':
                     contentArea.innerHTML = getPosHTML();
+                    initPosMobileLayout();
                     renderPosGrid();
                     renderCart();
                     (function tickClock(){
@@ -1162,32 +1168,52 @@
                          + ' ' + now.toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
             const categories = [...new Set(state.products.map(p => p.category))];
             return `
-            <div style="display:flex;flex-direction:column;height:calc(100vh - 64px - 2rem);background:#f0fdf4;border-radius:10px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,.1);">
+            <div id="pos-wrapper" style="display:flex;flex-direction:column;height:calc(100vh - 64px - 2rem);background:#f0fdf4;border-radius:10px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,.1);">
                 <!-- HEADER -->
                 <div style="background:#16a34a;color:#fff;padding:8px 16px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
                     <div>
-                        <div style="font-weight:900;font-size:18px;letter-spacing:0.5px;line-height:1.2;">${namaTokoStruk||'Toko'}</div>
-                        <div style="font-style:italic;font-size:11px;opacity:.88;margin-top:1px;font-family:Georgia,serif;letter-spacing:0.2px;">Online Payment, Printing &amp; Document Creation Services</div>
+                        <div style="font-weight:900;font-size:18px;letter-spacing:0.5px;line-height:1.2;" class="pos-title-desktop">${namaTokoStruk||'Toko'}</div>
+                        <div style="font-style:italic;font-size:11px;opacity:.88;margin-top:1px;font-family:Georgia,serif;letter-spacing:0.2px;" class="pos-subtitle-desktop">Online Payment, Printing &amp; Document Creation Services</div>
                     </div>
-                    <div style="text-align:right;background:rgba(0,0,0,.18);border-radius:10px;padding:4px 18px;min-width:240px;">
+                    <div style="text-align:right;background:rgba(0,0,0,.18);border-radius:10px;padding:4px 18px;min-width:240px;" class="pos-total-desktop">
                         <div style="font-size:10px;opacity:.85;text-transform:uppercase;letter-spacing:1px;">Total Belanja</div>
                         <div id="pos-header-total" style="font-size:48px;font-weight:900;line-height:1;letter-spacing:-2px;">Rp 0</div>
                     </div>
+                    <!-- Mobile Header Total -->
+                    <div style="text-align:right;background:rgba(0,0,0,.18);border-radius:8px;padding:4px 10px;" class="pos-total-mobile">
+                        <div style="font-size:9px;opacity:.85;text-transform:uppercase;letter-spacing:0.5px;">Total</div>
+                        <div id="pos-header-total-mobile" style="font-size:22px;font-weight:900;line-height:1.1;">Rp 0</div>
+                    </div>
                 </div>
-                <!-- MAIN -->
-                <div style="display:flex;flex:1;min-height:0;">
-                    <!-- LEFT 50% -->
-                    <div style="flex:1;display:flex;flex-direction:column;min-width:0;background:#fff;border-right:2px solid #16a34a;">
+
+                <!-- MOBILE TAB BAR -->
+                <div id="pos-tab-bar" class="pos-mobile-only" style="display:none;background:#fff;border-bottom:2px solid #16a34a;flex-shrink:0;">
+                    <div style="display:grid;grid-template-columns:1fr 1fr;">
+                        <button id="pos-tab-produk" onclick="switchPosTab('produk')"
+                            style="padding:10px 4px;font-size:13px;font-weight:700;border:none;background:#16a34a;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px;">
+                            <i class="ph ph-package" style="font-size:16px;"></i> Produk
+                        </button>
+                        <button id="pos-tab-keranjang" onclick="switchPosTab('keranjang')"
+                            style="padding:10px 4px;font-size:13px;font-weight:700;border:none;background:#f0fdf4;color:#16a34a;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px;">
+                            <i class="ph ph-shopping-cart" style="font-size:16px;"></i> Keranjang <span id="pos-cart-badge" style="background:#16a34a;color:#fff;border-radius:999px;font-size:10px;padding:1px 6px;min-width:18px;display:inline-block;text-align:center;">0</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- MAIN AREA -->
+                <div style="display:flex;flex:1;min-height:0;" id="pos-main">
+                    <!-- LEFT: Produk panel -->
+                    <div id="pos-panel-produk" style="flex:1;display:flex;flex-direction:column;min-width:0;background:#fff;border-right:2px solid #16a34a;">
                         <div style="flex:1;overflow-y:auto;">
                             <table style="width:100%;border-collapse:collapse;font-size:12px;">
                                 <thead>
                                     <tr style="background:#dcfce7;position:sticky;top:0;z-index:2;">
                                         <th style="padding:6px 8px;border-bottom:2px solid #16a34a;color:#166534;font-weight:700;text-align:center;width:30px;">No</th>
-                                        <th style="padding:6px 8px;border-bottom:2px solid #16a34a;color:#166534;font-weight:700;text-align:left;width:75px;">Kode</th>
+                                        <th style="padding:6px 8px;border-bottom:2px solid #16a34a;color:#166534;font-weight:700;text-align:left;width:75px;" class="pos-col-desktop">Kode</th>
                                         <th style="padding:6px 8px;border-bottom:2px solid #16a34a;color:#166534;font-weight:700;text-align:left;">Nama Produk</th>
                                         <th style="padding:6px 8px;border-bottom:2px solid #16a34a;color:#166534;font-weight:700;text-align:center;width:88px;">Qty</th>
                                         <th style="padding:6px 8px;border-bottom:2px solid #16a34a;color:#166534;font-weight:700;text-align:right;width:90px;">Harga</th>
-                                        <th style="padding:6px 8px;border-bottom:2px solid #16a34a;color:#166534;font-weight:700;text-align:right;width:90px;">Diskon</th>
+                                        <th style="padding:6px 8px;border-bottom:2px solid #16a34a;color:#166534;font-weight:700;text-align:right;width:90px;" class="pos-col-desktop">Diskon</th>
                                         <th style="padding:6px 8px;border-bottom:2px solid #16a34a;color:#166534;font-weight:700;text-align:right;width:90px;">Total</th>
                                         <th style="padding:6px 8px;border-bottom:2px solid #16a34a;width:28px;"></th>
                                     </tr>
@@ -1212,26 +1238,80 @@
                             <button onclick="openPosScanner()" style="padding:6px 10px;background:#16a34a;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;display:flex;align-items:center;gap:4px;white-space:nowrap;">
                                 <i class="ph ph-barcode" style="font-size:14px;"></i> Scan
                             </button>
-                            <select onchange="handlePosCategoryChange(event)" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;background:#fff;min-width:130px;outline:none;">
-                                <option value="Semua" ${state.posCategory==='Semua'?'selected':''}>Semua Kategori</option>
+                            <select onchange="handlePosCategoryChange(event)" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;background:#fff;min-width:100px;outline:none;max-width:130px;">
+                                <option value="Semua" ${state.posCategory==='Semua'?'selected':''}>Semua</option>
                                 ${categories.map(c=>`<option value="${c}" ${state.posCategory===c?'selected':''}>${c}</option>`).join('')}
                             </select>
                         </div>
                         <div id="pos-product-grid" style="flex-shrink:0;background:#fafafa;"></div>
                     </div>
-                    <!-- RIGHT 50% -->
-                    <div style="flex:1;min-width:0;background:#f8fafc;display:flex;flex-direction:column;overflow-y:auto;">
+                    <!-- RIGHT: Keranjang panel -->
+                    <div id="pos-panel-keranjang" style="flex:1;min-width:0;background:#f8fafc;display:flex;flex-direction:column;overflow-y:auto;">
                         <div id="pos-cart-footer" style="flex:1;padding:10px;display:flex;flex-direction:column;gap:6px;"></div>
                     </div>
                 </div>
                 <!-- STATUS BAR -->
                 <div style="background:#166534;color:#fff;padding:5px 12px;font-size:11px;display:flex;gap:16px;align-items:center;flex-shrink:0;">
                     <span>Waktu: <strong id="pos-clock">${tglStr}</strong></span>
-                    <span>Item Produk: <strong id="pos-item-count">0</strong></span>
-                    <span>Jumlah Qty: <strong id="pos-qty-count">0</strong></span>
-                    <span style="margin-left:auto;opacity:.7;">Z-TRONIK POS &bull; ${state.products.length} produk tersedia</span>
+                    <span>Item: <strong id="pos-item-count">0</strong></span>
+                    <span>Qty: <strong id="pos-qty-count">0</strong></span>
+                    <span style="margin-left:auto;opacity:.7;" class="pos-col-desktop">Z-TRONIK POS &bull; ${state.products.length} produk</span>
                 </div>
-            </div>`;
+            </div>
+
+            <style>
+                @media (max-width: 767px) {
+                    .pos-title-desktop { font-size: 14px !important; }
+                    .pos-subtitle-desktop { display: none !important; }
+                    .pos-total-desktop { display: none !important; }
+                    .pos-total-mobile { display: block !important; }
+                    .pos-mobile-only { display: block !important; }
+                    .pos-col-desktop { display: none !important; }
+                    #pos-main { flex-direction: column; }
+                    #pos-panel-produk { border-right: none !important; }
+                    #pos-panel-keranjang { border-top: 2px solid #16a34a; }
+                    /* Tab mode: panels shown one at a time */
+                    #pos-panel-produk.tab-mode, #pos-panel-keranjang.tab-mode { display: none !important; }
+                    #pos-panel-produk.tab-active, #pos-panel-keranjang.tab-active { display: flex !important; flex: 1; min-height: 0; }
+                }
+                @media (min-width: 768px) {
+                    .pos-total-mobile { display: none !important; }
+                    .pos-mobile-only { display: none !important; }
+                    #pos-panel-produk, #pos-panel-keranjang { display: flex !important; }
+                }
+            </style>`;
+        }
+
+        // Switch tab di mobile POS
+        var _posActiveTab = 'produk';
+        function switchPosTab(tab) {
+            _posActiveTab = tab;
+            var panelProduk    = document.getElementById('pos-panel-produk');
+            var panelKeranjang = document.getElementById('pos-panel-keranjang');
+            var tabProduk      = document.getElementById('pos-tab-produk');
+            var tabKeranjang   = document.getElementById('pos-tab-keranjang');
+            if (!panelProduk || !panelKeranjang) return;
+            if (tab === 'produk') {
+                panelProduk.className    = 'tab-active';
+                panelKeranjang.className = 'tab-mode';
+                tabProduk.style.background    = '#16a34a'; tabProduk.style.color    = '#fff';
+                tabKeranjang.style.background = '#f0fdf4'; tabKeranjang.style.color = '#16a34a';
+            } else {
+                panelProduk.className    = 'tab-mode';
+                panelKeranjang.className = 'tab-active';
+                tabProduk.style.background    = '#f0fdf4'; tabProduk.style.color    = '#16a34a';
+                tabKeranjang.style.background = '#16a34a'; tabKeranjang.style.color = '#fff';
+            }
+        }
+
+        function initPosMobileLayout() {
+            if (window.innerWidth <= 767) {
+                var panelProduk    = document.getElementById('pos-panel-produk');
+                var panelKeranjang = document.getElementById('pos-panel-keranjang');
+                if (panelProduk)    panelProduk.className    = 'tab-active';
+                if (panelKeranjang) panelKeranjang.className = 'tab-mode';
+                _posActiveTab = 'produk';
+            }
         }
         function handleSearch(e) {
             state.searchQuery = e.target.value.toLowerCase();
@@ -1291,6 +1371,10 @@
                 }
             }
             renderCart();
+            // Mobile: auto-switch ke tab keranjang saat item pertama ditambah
+            if (window.innerWidth <= 767 && state.cart.length === 1) {
+                switchPosTab('keranjang');
+            }
         }
 
         function updateQty(productId, change) {
@@ -1653,14 +1737,15 @@
             }
             function itemBtn(p) {
                 const low = p.stock <= p.minStock;
+                const isMobile = window.innerWidth <= 767;
                 return `<button onclick="addToCart('${p.id}')"
-                    style="display:flex;align-items:center;justify-content:space-between;width:100%;padding:5px 8px;background:#fff;border:none;border-bottom:1px solid #f0fdf4;cursor:pointer;text-align:left;box-sizing:border-box;"
+                    style="display:flex;align-items:center;justify-content:space-between;width:100%;padding:${isMobile?'9px 10px':'5px 8px'};background:#fff;border:none;border-bottom:1px solid #f0fdf4;cursor:pointer;text-align:left;box-sizing:border-box;"
                     onmouseover="this.style.background='#f0fdf4'" onmouseout="this.style.background='#fff'">
                     <div style="min-width:0;flex:1;">
-                        <div style="font-size:11px;font-weight:600;color:#1f2937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px;">${p.name}</div>
-                        <div style="font-size:11px;font-weight:700;color:#16a34a;">${formatRp(p.price)}</div>
+                        <div style="font-size:${isMobile?'12px':'11px'};font-weight:600;color:#1f2937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:${isMobile?'150px':'130px'};">${p.name}</div>
+                        <div style="font-size:${isMobile?'12px':'11px'};font-weight:700;color:#16a34a;">${formatRp(p.price)}</div>
                     </div>
-                    <span style="flex-shrink:0;font-size:10px;padding:1px 5px;border-radius:3px;font-weight:600;margin-left:4px;background:${low?'#fee2e2':'#dcfce7'};color:${low?'#dc2626':'#16a34a'};">${p.stock}</span>
+                    <span style="flex-shrink:0;font-size:10px;padding:2px 6px;border-radius:3px;font-weight:600;margin-left:4px;background:${low?'#fee2e2':'#dcfce7'};color:${low?'#dc2626':'#16a34a'};">${p.stock}</span>
                 </button>`;
             }
             const col1 = pageItems.slice(0,5).map(itemBtn).join('');
@@ -1679,16 +1764,20 @@
         function renderCart() {
             const tbody  = document.getElementById('pos-cart-tbody');
             const hdrTot = document.getElementById('pos-header-total');
+            const hdrTotMobile = document.getElementById('pos-header-total-mobile');
             const itemCt = document.getElementById('pos-item-count');
             const qtyCt  = document.getElementById('pos-qty-count');
+            const badge  = document.getElementById('pos-cart-badge');
             if (!tbody) return;
             if (itemCt) itemCt.innerText = state.cart.length;
             if (qtyCt)  qtyCt.innerText  = state.cart.reduce((s,i)=>s+i.qty,0);
+            if (badge)  badge.innerText  = state.cart.length;
             if (state.cart.length === 0) {
                 tbody.innerHTML = `<tr><td colspan="8" style="padding:40px;text-align:center;color:#9ca3af;">
                     <div style="font-size:32px;margin-bottom:6px;">&#128722;</div>
                     <div>Pilih produk dari daftar di bawah</div></td></tr>`;
                 if (hdrTot) hdrTot.innerText = 'Rp 0';
+                if (hdrTotMobile) hdrTotMobile.innerText = 'Rp 0';
             } else {
                 let rows = '';
                 state.cart.forEach((item, idx) => {
@@ -1730,6 +1819,7 @@
                 const disc = state.discountType==='Rp' ? state.discountValue : sub*(state.discountValue/100);
                 const grand = Math.max(0, sub - disc - (state.posPoinRedeem||0));
                 if (hdrTot) hdrTot.innerText = formatRp(grand);
+                if (hdrTotMobile) hdrTotMobile.innerText = formatRp(grand);
             }
             renderCartFooter();
         }
@@ -1830,7 +1920,12 @@
                 <i class="ph ph-trash" style="font-size:14px;"></i> Kosongkan Keranjang
             </button>` : '';
 
-            footer.innerHTML = memberHtml + summaryHtml + methodHtml + checkoutHtml + clearHtml;
+            const mobileBackBtn = window.innerWidth <= 767 ? `<button onclick="switchPosTab('produk')"
+                style="width:100%;padding:10px;background:#f0fdf4;color:#16a34a;border:2px solid #16a34a;border-radius:9px;font-size:13px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;flex-shrink:0;">
+                <i class="ph ph-arrow-left" style="font-size:16px;"></i> Tambah Produk Lagi
+            </button>` : '';
+
+            footer.innerHTML = mobileBackBtn + memberHtml + summaryHtml + methodHtml + checkoutHtml + clearHtml;
         }
         // Cari member berdasarkan input ID angka atau no HP
         function lookupMember(val) {
