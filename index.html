@@ -4476,7 +4476,7 @@
                     <p class="text-xs text-gray-400 ml-7">Manajemen shift, kas awal, dan riwayat kasir harian.</p>
                 </div>
                 <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
-                    <div class="flex flex-wrap gap-2">${tabHTML}</div>
+                    <div class="clerek-tabs flex flex-wrap gap-2">${tabHTML}</div>
                 </div>
                 <div id="clerek-body">${bodyHTML}</div>
             </div>`;
@@ -4489,8 +4489,7 @@
             if (tab === 'shift')        bod.innerHTML = getClerekShiftHTML();
             else if (tab === 'kas')     bod.innerHTML = getClerekKasHTML();
             else if (tab === 'riwayat') bod.innerHTML = getClerekRiwayatHTML();
-            // Re-render tab bar agar aktif berubah
-            document.querySelector('[onclick^="clerekSetTab"]') && renderClerekTabs();
+            renderClerekTabs();
         }
 
         function renderClerekTabs() {
