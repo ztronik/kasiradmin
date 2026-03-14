@@ -2,7 +2,7 @@
 <html lang="id">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Z-TRONIK POS System</title>
     
     <!-- Tailwind CSS -->
@@ -22,6 +22,27 @@
         #sidebar { transition: width 0.3s ease-in-out; }
         .hide-scrollbar::-webkit-scrollbar { display: none; }
         .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        /* Desktop: scale keseluruhan 85% */
+        @media (min-width: 1024px) {
+            html { zoom: 0.85; }
+        }
+        /* Mobile: sidebar sebagai fixed overlay, defaultnya tersembunyi */
+        @media (max-width: 1023px) {
+            #sidebar {
+                position: fixed !important;
+                top: 0;
+                left: 0;
+                height: 100vh !important;
+                overflow-y: auto !important;
+                transform: translateX(-100%);
+                transition: transform 0.3s ease-in-out !important;
+                z-index: 30;
+                width: 220px !important;
+            }
+            #sidebar.mobile-open {
+                transform: translateX(0);
+            }
+        }
         @keyframes slideUp {
             from { opacity: 0; transform: translateY(20px); }
             to   { opacity: 1; transform: translateY(0); }
@@ -39,44 +60,9 @@
         }
         @keyframes spin { to { transform: rotate(360deg); } }
         .animate-spin { animation: spin 0.8s linear infinite; }
-
-        /* ── MOBILE SIDEBAR ── */
-        #sidebar {
-            transition: transform 0.28s cubic-bezier(0.4,0,0.2,1);
-        }
-        @media (max-width: 1023px) {
-            #sidebar {
-                position: fixed !important;
-                left: 0; top: 0;
-                height: 100vh !important;
-                transform: translateX(-100%);
-                z-index: 30;
-            }
-            #sidebar.sidebar-open {
-                transform: translateX(0);
-            }
-            #sidebar-backdrop.show {
-                display: block !important;
-            }
-        }
-        @media (min-width: 1024px) {
-            #sidebar {
-                position: sticky !important;
-                transform: translateX(0) !important;
-            }
-            #sidebar-backdrop { display: none !important; }
-        }
-
-        /* ── POS MOBILE ── */
-        @media (max-width: 767px) {
-            #pos-main { flex-direction: column !important; }
-            #pos-main > div:first-child { border-right: none !important; border-bottom: 2px solid #16a34a; }
-            #pos-main > div:last-child { max-height: none !important; overflow-y: visible !important; }
-            #pos-product-grid { max-height: 280px; overflow-y: auto; }
-        }
     </style>
 </head>
-<body class="bg-gray-50 font-sans text-gray-800 flex min-h-screen overflow-x-hidden">
+<body class="bg-gray-50 font-sans text-gray-800 flex min-h-screen">
 
     <!-- LOGIN SCREEN -->
     <div id="login-screen" class="fixed inset-0 z-[200] flex items-center justify-center p-4" style="background:linear-gradient(135deg,#14532d 0%,#166534 40%,#15803d 70%,#16a34a 100%);">
@@ -119,20 +105,22 @@
         </div>
     </div>
 
-    <!-- Sidebar overlay backdrop (mobile) -->
-    <div id="sidebar-backdrop" onclick="closeSidebarMobile()" class="hidden fixed inset-0 bg-black/50 z-[19]"></div>
+    <!-- Mobile Sidebar Backdrop -->
+    <div id="sidebar-backdrop" onclick="toggleSidebar()" class="hidden fixed inset-0 bg-black/50 z-[15]"></div>
 
     <!-- Sidebar -->
-    <aside id="sidebar" class="w-64 flex flex-col z-20 shrink-0" style="background:linear-gradient(180deg,#14532d 0%,#166534 55%,#15803d 100%);position:sticky;top:0;height:100vh;overflow-y:auto;">
+    <aside id="sidebar" class="w-64 flex flex-col z-20 shrink-0" style="background:linear-gradient(180deg,#14532d 0%,#166534 55%,#15803d 100%);position:sticky;top:0;height:auto;min-height:100vh;overflow-y:visible;">
         <div class="h-16 flex items-center justify-between px-4 shrink-0" style="border-bottom:1px solid rgba(255,255,255,0.15);">
             <div>
                 <span id="sidebar-logo" class="font-bold text-xl" style="color:#fff;letter-spacing:1px;">Z-TRONIK</span>
                 <div id="sidebar-role-badge" style="display:none;margin-top:1px;"></div>
             </div>
-
+            <button onclick="toggleSidebar()" class="lg:hidden p-1 rounded-md" style="color:rgba(255,255,255,0.85);background:rgba(255,255,255,0.12);">
+                <i class="ph ph-x text-xl"></i>
+            </button>
         </div>
-        <nav class="flex-1 py-4 flex flex-col" style="min-height:0;">
-            <ul id="menu-list" class="space-y-1 px-3 flex-1 overflow-y-auto">
+        <nav class="py-4 flex flex-col">
+            <ul id="menu-list" class="space-y-1 px-3">
                 <!-- Menu items akan di-render di sini oleh JS -->
             </ul>
             <div class="px-3 pb-4 mt-2 shrink-0" style="border-top:1px solid rgba(255,255,255,0.1);padding-top:10px;">
@@ -152,9 +140,9 @@
     <!-- Main Content -->
     <main class="flex-1 flex flex-col w-full relative">
         <!-- Header -->
-        <header class="h-16 flex items-center justify-between px-4 shrink-0 sticky top-0 z-10" style="background:linear-gradient(90deg,#14532d 0%,#16a34a 100%);box-shadow:0 2px 8px rgba(21,128,61,.35);">
+        <header class="h-16 flex items-center justify-between px-4 lg:px-8 shrink-0 sticky top-0 z-10" style="background:linear-gradient(90deg,#14532d 0%,#16a34a 100%);box-shadow:0 2px 8px rgba(21,128,61,.35);">
             <div class="flex items-center">
-                <button onclick="toggleSidebar()" class="p-2 mr-3 rounded-md focus:outline-none shrink-0" style="color:#fff;background:rgba(255,255,255,0.12);">
+                <button onclick="toggleSidebar()" class="p-2 mr-3 rounded-md focus:outline-none" style="color:#fff;background:rgba(255,255,255,0.12);">
                     <i class="ph ph-list text-2xl"></i>
                 </button>
                 <h1 id="header-title" style="font-size:1.4rem;font-weight:800;color:#fff;letter-spacing:0.4px;">Dashboard</h1>
@@ -163,13 +151,13 @@
             <div class="flex items-center space-x-3">
                 <button onclick="fetchData()" title="Refresh data dari spreadsheet" class="p-2 rounded-lg transition-colors flex items-center gap-1.5 text-sm font-medium" style="color:#fff;border:1px solid rgba(255,255,255,0.3);background:rgba(255,255,255,0.12);">
                     <i class="ph ph-arrows-clockwise text-lg" id="refresh-icon" style="color:#fff;"></i>
-                    <span style="color:#fff;">Refresh</span>
+                    <span style="color:#fff;" class="hidden sm:inline">Refresh</span>
                 </button>
                 <div class="flex items-center gap-2 py-1.5 px-3 rounded-full" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.3);">
                     <div class="h-8 w-8 rounded-full flex items-center justify-center font-bold text-sm" style="background:rgba(255,255,255,0.25);color:#fff;">
                         <i class="ph ph-user text-sm"></i>
                     </div>
-                    <div>
+                    <div class="hidden sm:block">
                         <div id="header-admin-name" class="text-sm font-bold leading-tight" style="color:#fff;">-</div>
                         <div id="header-admin-role" class="text-xs opacity-75 leading-tight" style="color:#fff;">-</div>
                     </div>
@@ -178,7 +166,7 @@
         </header>
 
         <!-- Content Area -->
-        <div id="content-area" class="flex-1 bg-gray-50 p-4">
+        <div id="content-area" class="flex-1 bg-gray-50 p-4 lg:p-6">
             <!-- Konten halaman akan di-render di sini -->
         </div>
     </main>
@@ -615,49 +603,43 @@
             document.head.appendChild(s);
         }
 
-        function isMobile() { return window.innerWidth < 1024; }
-
-        function toggleSidebar() {
-            var sidebar   = document.getElementById('sidebar');
-            var backdrop  = document.getElementById('sidebar-backdrop');
-            if (isMobile()) {
-                // Mobile: slide in/out dengan overlay
-                var isOpen = sidebar.classList.contains('sidebar-open');
-                if (isOpen) {
-                    sidebar.classList.remove('sidebar-open');
-                    if (backdrop) backdrop.classList.remove('show');
-                    state.isSidebarOpen = false;
+                function toggleSidebar() {
+            state.isSidebarOpen = !state.isSidebarOpen;
+            const sidebar = document.getElementById('sidebar');
+            const logo = document.getElementById('sidebar-logo');
+            const backdrop = document.getElementById('sidebar-backdrop');
+            const isMobile = window.innerWidth < 1024;
+            
+            if (state.isSidebarOpen) {
+                if (isMobile) {
+                    // Mobile: geser masuk (fixed overlay)
+                    sidebar.classList.add('mobile-open');
+                    if (backdrop) backdrop.classList.remove('hidden');
                 } else {
-                    sidebar.classList.add('sidebar-open');
-                    if (backdrop) backdrop.classList.add('show');
-                    state.isSidebarOpen = true;
+                    // Desktop: tampilkan lebar penuh
+                    sidebar.classList.remove('w-0', 'lg:w-20');
+                    sidebar.classList.add('w-64');
                 }
+                logo.classList.remove('hidden', 'lg:block', 'lg:text-center', 'lg:w-full');
+                logo.innerText = 'Z-TRONIK';
+                var rb = document.getElementById('sidebar-role-badge');
+                if (rb) rb.style.display = 'block';
             } else {
-                // Desktop: toggle lebar sidebar
-                state.isSidebarOpen = !state.isSidebarOpen;
-                var logo = document.getElementById('sidebar-logo');
-                if (state.isSidebarOpen) {
-                    sidebar.style.width = '16rem';
-                    if (logo) logo.innerText = 'Z-TRONIK';
-                    var rb = document.getElementById('sidebar-role-badge');
-                    if (rb) rb.style.display = 'block';
+                if (isMobile) {
+                    // Mobile: geser keluar
+                    sidebar.classList.remove('mobile-open');
+                    if (backdrop) backdrop.classList.add('hidden');
                 } else {
-                    sidebar.style.width = '5rem';
-                    if (logo) logo.innerText = 'ZT';
+                    // Desktop: ciutkan
+                    sidebar.classList.remove('w-64');
+                    sidebar.classList.add('w-0', 'lg:w-20');
+                    logo.classList.add('hidden', 'lg:block', 'lg:text-center', 'lg:w-full');
+                    logo.innerText = 'ZT';
                     var rb = document.getElementById('sidebar-role-badge');
                     if (rb) rb.style.display = 'none';
                 }
             }
             renderSidebarMenu();
-        }
-
-        function closeSidebarMobile() {
-            if (!isMobile()) return;
-            var sidebar  = document.getElementById('sidebar');
-            var backdrop = document.getElementById('sidebar-backdrop');
-            sidebar.classList.remove('sidebar-open');
-            if (backdrop) backdrop.classList.remove('show');
-            state.isSidebarOpen = false;
         }
 
         function setActiveMenu(menuName) {
@@ -694,6 +676,11 @@
             state.activeMenu = menuName;
             document.getElementById('header-title').innerText = menuName;
             
+            // Mobile: tutup sidebar setelah pilih menu
+            if (window.innerWidth < 1024 && state.isSidebarOpen) {
+                toggleSidebar();
+            }
+            
             state.searchQuery = '';
             state.posPage = 1;
             state.productPage = 1;
@@ -711,8 +698,6 @@
             state.laporanSearch = '';
             state.custPoinPage = 1;
 
-            // Tutup sidebar otomatis setelah pilih menu di mobile
-            if (isMobile()) closeSidebarMobile();
             renderSidebarMenu();
             renderContent();
         }
@@ -938,12 +923,7 @@
                 const lockBadge = isLocked && state.isSidebarOpen
                     ? `<i class="ph ph-lock text-xs" style="margin-left:auto;opacity:0.5;"></i>`
                     : '';
-                // Di mobile: selalu tampilkan teks (sidebar overlay penuh)
-                // Di desktop: tampilkan teks hanya jika sidebar tidak di-collapse
-                const showText = typeof isMobile === 'function'
-                    ? (isMobile() ? true : state.isSidebarOpen)
-                    : state.isSidebarOpen;
-                const textSpan = showText
+                const textSpan = state.isSidebarOpen
                     ? `<span style="margin-left:10px;flex:1;">${menu.name}</span>${lockBadge}`
                     : '';
                 return `<li>
@@ -974,10 +954,7 @@
             }
             // Sembunyikan/tampilkan label tombol Keluar sesuai kondisi sidebar
             var logoutLabel = document.getElementById('sidebar-logout-label');
-            var showLbl = typeof isMobile === 'function'
-                ? (isMobile() ? true : state.isSidebarOpen)
-                : state.isSidebarOpen;
-            if (logoutLabel) logoutLabel.style.display = showLbl ? 'inline' : 'none';
+            if (logoutLabel) logoutLabel.style.display = state.isSidebarOpen ? 'inline' : 'none';
         }
 
         function renderContent() {
@@ -1089,7 +1066,7 @@
 
             return `
                 <div class="space-y-5">
-                    <div class="grid grid-cols-2 gap-4">
+                    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
                         <div class="bg-white rounded-xl p-5 shadow-sm border border-gray-100 flex items-center gap-4">
                             <div class="p-3 rounded-lg text-white bg-green-500 shrink-0"><i class="ph ph-bank text-2xl"></i></div>
                             <div><p class="text-xs text-gray-500 font-medium">Omzet Hari Ini</p><p class="text-xl font-bold text-gray-800">${formatRp(omzetHariIni)}</p></div>
@@ -1108,9 +1085,9 @@
                         </div>
                     </div>
 
-                    <div class="grid grid-cols-1 gap-5">
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
                         <!-- Grafik 7 hari -->
-                        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+                        <div class="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-100 p-5">
                             <div class="flex justify-between items-center mb-4">
                                 <h3 class="font-semibold text-gray-800">Grafik Penjualan (7 Hari)</h3>
                                 <button onclick="navigateTo('Laporan')" class="text-xs text-green-600 hover:underline flex items-center gap-1"><i class="ph ph-arrow-right"></i> Laporan Lengkap</button>
@@ -1168,7 +1145,7 @@
                     </div>
                 </div>
                 <!-- MAIN -->
-                <div id="pos-main" style="display:flex;flex:1;min-height:0;">
+                <div style="display:flex;flex:1;min-height:0;">
                     <!-- LEFT 50% -->
                     <div style="flex:1;display:flex;flex-direction:column;min-width:0;background:#fff;border-right:2px solid #16a34a;">
                         <div style="flex:1;overflow-y:auto;">
@@ -2173,16 +2150,16 @@
 
             return `
                 <div class="bg-white rounded-xl shadow-sm border border-gray-100 flex flex-col">
-                    <div class="p-5 border-b border-gray-100 flex flex-row flex-wrap gap-3 justify-between items-center">
+                    <div class="p-5 border-b border-gray-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                         <div>
                             <h2 class="font-semibold text-lg text-gray-800">Daftar Produk Saya</h2>
                             <p class="text-sm text-gray-500">Daftar inventaris dan stok barang tersinkronisasi.</p>
                         </div>
-                        <div class="flex gap-2 w-auto">
+                        <div class="flex gap-2 w-full sm:w-auto">
                             <button onclick="fetchData()" class="px-3 py-2 bg-green-50 text-green-600 font-medium text-sm rounded-lg hover:bg-green-100 transition-colors flex items-center justify-center">
                                 <i class="ph ph-arrows-clockwise text-lg"></i>
                             </button>
-                            <button onclick="openProductModal()" class="flex-none px-4 py-2 bg-green-600 text-white font-medium text-sm rounded-lg hover:bg-green-700 transition-colors flex items-center justify-center gap-2 shadow-sm">
+                            <button onclick="openProductModal()" class="flex-1 sm:flex-none px-4 py-2 bg-green-600 text-white font-medium text-sm rounded-lg hover:bg-green-700 transition-colors flex items-center justify-center gap-2 shadow-sm">
                                 <i class="ph ph-plus"></i> Tambah Produk
                             </button>
                         </div>
@@ -2195,7 +2172,7 @@
         function getSettingsHTML() {
             return `
                 <div class="max-w-4xl space-y-6">
-                    <div class="grid grid-cols-1 gap-6">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
                             <h2 class="text-lg font-semibold text-gray-800 mb-4 border-b pb-2">Pengaturan Toko</h2>
                             <div class="space-y-4">
@@ -2232,7 +2209,7 @@
                 </div>
 
                     <!-- Kredensial Admin -->
-                    <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                    <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6 md:col-span-2">
                         <h2 class="text-lg font-semibold text-gray-800 mb-4 border-b pb-2 flex items-center gap-2"><i class="ph ph-shield-check text-green-600"></i> Kredensial Admin</h2>
                         <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
                             <div>
@@ -2557,7 +2534,7 @@
                 return `
                 <div class="space-y-4">
                     <!-- Summary cards -->
-                    <div class="grid grid-cols-2 grid-cols-2 gap-4">
+                    <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
                         <div class="bg-white rounded-xl p-4 shadow-sm border border-gray-100 text-center">
                             <p class="text-xs text-gray-500 mb-1">Total Produk Dicek</p>
                             <p class="text-2xl font-bold text-gray-800">${stockOpnameData.length}</p>
@@ -2577,7 +2554,7 @@
                     </div>
 
                     <div class="bg-white rounded-xl shadow-sm border border-gray-100">
-                        <div class="p-4 border-b border-gray-100 flex flex-row flex-wrap gap-3 justify-between items-center">
+                        <div class="p-4 border-b border-gray-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                             <div>
                                 <h2 class="font-semibold text-gray-800">Laporan Stock Opname</h2>
                                 <p class="text-xs text-gray-500">
@@ -2672,7 +2649,7 @@
             return `
                 <div class="space-y-4">
                     <!-- Header bar -->
-                    <div class="bg-green-600 rounded-xl p-4 text-white flex flex-row flex-wrap gap-3 justify-between items-center">
+                    <div class="bg-green-600 rounded-xl p-4 text-white flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                         <div class="flex items-center gap-3">
                             <div class="w-3 h-3 rounded-full bg-white animate-pulse"></div>
                             <div>
@@ -2686,7 +2663,7 @@
                     </div>
 
                     <div class="bg-white rounded-xl shadow-sm border border-gray-100">
-                        <div class="p-4 border-b border-gray-100 flex flex-row flex-wrap gap-3 justify-between bg-gray-50/50">
+                        <div class="p-4 border-b border-gray-100 flex flex-col sm:flex-row gap-3 justify-between bg-gray-50/50">
                             <div class="flex gap-2 flex-1">
                                 <div class="relative flex-1 max-w-sm">
                                     <input type="text" placeholder="Cari nama, ID, atau kategori..." value="${state.opnameSearch}"
@@ -3033,7 +3010,7 @@
                     + "<div class=\"text-sm text-blue-700\"><p class=\"font-semibold\">Mode Karyawan</p>"
                     + "<p class=\"text-xs mt-0.5\">Anda hanya dapat melihat poin pelanggan dan menukar poin. Pengaturan poin & reward hanya untuk admin.</p></div></div>";
             }
-            html += "<div class=\"grid grid-cols-2 grid-cols-2 gap-3\">"
+            html += "<div class=\"grid grid-cols-2 sm:grid-cols-4 gap-3\">"
                 + "<div class=\"bg-white rounded-xl p-4 shadow-sm border border-gray-100 flex items-center gap-3\"><div class=\"p-2.5 rounded-lg bg-green-500 text-white shrink-0\"><i class=\"ph ph-star text-xl\"></i></div><div><p class=\"text-xs text-gray-500\">Poin Aktif Beredar</p><p class=\"text-xl font-bold text-gray-800\">" + totalPoin.toLocaleString("id-ID") + "</p></div></div>"
                 + "<div class=\"bg-white rounded-xl p-4 shadow-sm border border-gray-100 flex items-center gap-3\"><div class=\"p-2.5 rounded-lg bg-yellow-400 text-white shrink-0\"><i class=\"ph ph-crown text-xl\"></i></div><div><p class=\"text-xs text-gray-500\">Member Gold</p><p class=\"text-xl font-bold text-gray-800\">" + goldCount + "</p></div></div>"
                 + "<div class=\"bg-white rounded-xl p-4 shadow-sm border border-gray-100 flex items-center gap-3\"><div class=\"p-2.5 rounded-lg bg-blue-500 text-white shrink-0\"><i class=\"ph ph-users text-xl\"></i></div><div><p class=\"text-xs text-gray-500\">Total Member</p><p class=\"text-xl font-bold text-gray-800\">" + rewardData.customers.length + "</p></div></div>"
@@ -3195,7 +3172,7 @@
             return `
                 <div class="space-y-4">
                     <!-- Summary cards -->
-                    <div class="grid grid-cols-2 gap-4">
+                    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
                         <div class="bg-white rounded-xl p-4 shadow-sm border border-gray-100 flex items-center gap-3">
                             <div class="p-2.5 rounded-lg bg-green-500 text-white shrink-0"><i class="ph ph-bank text-xl"></i></div>
                             <div><p class="text-xs text-gray-500">Total Omzet</p><p class="text-lg font-bold text-gray-800">${formatRp(totalOmzet)}</p></div>
@@ -3216,7 +3193,7 @@
 
                     <div class="bg-white rounded-xl shadow-sm border border-gray-100">
                         <!-- Toolbar -->
-                        <div class="p-4 border-b border-gray-100 flex flex-row flex-wrap gap-3 justify-between items-center">
+                        <div class="p-4 border-b border-gray-100 flex flex-col sm:flex-row gap-3 justify-between items-start sm:items-center">
                             <div>
                                 <h2 class="font-semibold text-gray-800">Riwayat Transaksi</h2>
                                 <p class="text-xs text-gray-500">${currentUser && currentUser.role === 'karyawan' ? '⚠️ Pembatalan transaksi memerlukan verifikasi password admin.' : 'Admin dapat membatalkan transaksi langsung.'}</p>
@@ -3889,7 +3866,7 @@
                     }).join('');
 
                 tableContent = `
-                    <div class="p-4 border-b border-gray-100 flex flex-row flex-wrap gap-3 justify-between bg-gray-50/50">
+                    <div class="p-4 border-b border-gray-100 flex flex-col sm:flex-row gap-3 justify-between bg-gray-50/50">
                         <div class="flex gap-2 flex-1">
                             <div class="relative flex-1 max-w-sm">
                                 <input type="text" placeholder="Cari nama, no. HP, atau ID member..." value="${state.customerSearch}"
@@ -3942,7 +3919,7 @@
             return `
                 <div class="space-y-4">
                     <!-- Banner poin akumulasi + reset -->
-                    <div class="bg-gradient-to-r from-purple-600 to-indigo-700 rounded-xl p-4 text-white flex flex-row flex-wrap gap-3 items-center justify-between">
+                    <div class="bg-gradient-to-r from-purple-600 to-indigo-700 rounded-xl p-4 text-white flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                         <div>
                             <p class="font-semibold flex items-center gap-2"><i class="ph ph-chart-line-up"></i> Poin Akumulasi Member</p>
                             <p class="text-purple-200 text-xs mt-1">Total poin historis per member (tidak bisa ditukar). Direset setelah THR dibagikan. Poin aktif = bisa ditukar diskon/reward.</p>
@@ -3953,16 +3930,16 @@
                     </div>
 
                     <div class="bg-white rounded-xl shadow-sm border border-gray-100 flex flex-col">
-                        <div class="p-5 border-b border-gray-100 flex flex-row flex-wrap gap-3 justify-between items-center">
+                        <div class="p-5 border-b border-gray-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                             <div>
                                 <h2 class="font-semibold text-lg text-gray-800">Daftar Pelanggan / Member</h2>
                                 <p class="text-sm text-gray-500">${state.customers.length} pelanggan terdaftar.</p>
                             </div>
-                            <div class="flex gap-2 w-auto">
+                            <div class="flex gap-2 w-full sm:w-auto">
                                 <button onclick="fetchData()" class="px-3 py-2 bg-green-50 text-green-600 font-medium text-sm rounded-lg hover:bg-green-100 transition-colors flex items-center justify-center">
                                     <i class="ph ph-arrows-clockwise text-lg"></i>
                                 </button>
-                                <button onclick="openCustomerModal()" class="flex-none px-4 py-2 bg-green-600 text-white font-medium text-sm rounded-lg hover:bg-green-700 transition-colors flex items-center justify-center gap-2 shadow-sm">
+                                <button onclick="openCustomerModal()" class="flex-1 sm:flex-none px-4 py-2 bg-green-600 text-white font-medium text-sm rounded-lg hover:bg-green-700 transition-colors flex items-center justify-center gap-2 shadow-sm">
                                     <i class="ph ph-plus"></i> Tambah Pelanggan
                                 </button>
                             </div>
@@ -4026,7 +4003,7 @@
                   }).join('');
             return '<div class="space-y-4">'
                 +'<div class="bg-white rounded-xl shadow-sm border border-gray-100">'
-                +'<div class="p-5 border-b border-gray-100 flex flex-row flex-wrap gap-3 justify-between items-center">'
+                +'<div class="p-5 border-b border-gray-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">'
                 +'<div><h2 class="font-semibold text-lg text-gray-800">Manajemen Karyawan</h2>'
                 +'<p class="text-sm text-gray-500">'+list.length+' karyawan terdaftar.</p></div>'
                 +'<button onclick="openKaryawanModal(-1)" class="px-4 py-2 bg-green-600 text-white font-medium text-sm rounded-lg hover:bg-green-700 flex items-center gap-2 shadow-sm">'
@@ -4582,7 +4559,7 @@
                 </div>
                 <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
                     <h3 class="font-bold text-gray-800 mb-3 flex items-center gap-2"><i class="ph ph-plus-circle text-green-600"></i> Tambah Mutasi Kas</h3>
-                    <div class="grid grid-cols-1 grid-cols-2 gap-3">
+                    <div class="grid grid-cols-1 sm:grid-cols-4 gap-3">
                         <select id="mutasi-tipe" class="px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-green-500 focus:outline-none">
                             <option value="masuk">💚 Kas Masuk</option>
                             <option value="keluar">❤️ Kas Keluar</option>
@@ -4590,7 +4567,7 @@
                         <input type="number" id="mutasi-jumlah" placeholder="Jumlah (Rp)" min="0"
                             class="px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-green-500 focus:outline-none" />
                         <input type="text" id="mutasi-ket" placeholder="Keterangan..."
-                            class="col-span-1 px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-green-500 focus:outline-none" />
+                            class="sm:col-span-1 px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-green-500 focus:outline-none" />
                         <button onclick="clerekTambahMutasi()" class="px-4 py-2.5 bg-green-600 text-white font-bold rounded-xl hover:bg-green-700 text-sm flex items-center justify-center gap-2">
                             <i class="ph ph-plus text-base"></i> Tambah
                         </button>
@@ -4674,7 +4651,7 @@
             return `<div class="space-y-4">
                 <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
                     <h3 class="font-bold text-gray-800 mb-3 flex items-center gap-2"><i class="ph ph-note-pencil text-green-600"></i> Tambah Catatan Tugas</h3>
-                    <div class="flex flex-row flex-wrap gap-3">
+                    <div class="flex flex-col sm:flex-row gap-3">
                         <input type="text" id="catatan-teks" placeholder="Tulis tugas atau catatan..."
                             class="flex-1 px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-green-500 focus:outline-none"
                             onkeydown="if(event.key==='Enter')clerekTambahCatatan()" />
@@ -4817,40 +4794,18 @@
                 }
             }
 
+            // Mobile: sidebar default tertutup (tidak perlu toggle)
+            // Desktop: sidebar default terbuka (state.isSidebarOpen = true sudah di state)
+            if (window.innerWidth < 1024) {
+                // Set state closed tanpa memanggil toggleSidebar (agar tidak flip state)
+                state.isSidebarOpen = false;
+                var backdrop = document.getElementById('sidebar-backdrop');
+                if (backdrop) backdrop.classList.add('hidden');
+            }
+
             fetchData();
             renderSidebarMenu();
             renderContent();
-
-            // Init sidebar: mobile = tertutup, desktop = terbuka
-            if (isMobile()) {
-                state.isSidebarOpen = false;
-                // pastikan tidak ada sidebar-open di awal
-                var sb = document.getElementById('sidebar');
-                if (sb) sb.classList.remove('sidebar-open');
-            } else {
-                state.isSidebarOpen = true;
-                var sb = document.getElementById('sidebar');
-                if (sb) sb.style.width = '16rem';
-            }
-
-            // Resize: saat rotate/resize, tutup sidebar mobile jika terbuka
-            window.addEventListener('resize', function() {
-                if (isMobile()) {
-                    closeSidebarMobile();
-                } else {
-                    // Desktop: pastikan sidebar terlihat
-                    var sb = document.getElementById('sidebar');
-                    var bd = document.getElementById('sidebar-backdrop');
-                    if (sb) sb.classList.remove('sidebar-open');
-                    if (bd) bd.classList.remove('show');
-                    if (!state.isSidebarOpen) {
-                        // Pertahankan state desktop (collapsed)
-                        if (sb) sb.style.width = '5rem';
-                    } else {
-                        if (sb) sb.style.width = '16rem';
-                    }
-                }
-            });
         });
 
     </script>
