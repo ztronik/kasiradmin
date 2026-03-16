@@ -582,7 +582,7 @@
                     if (data.customers) {
                         state.customers = data.customers.map(function(c) { return {
                             id: c.ID_Pelanggan, name: c.Nama_Pelanggan,
-                            phone: c.No_HP||'', email: c.Email||'',
+                            phone: normalizePhoneNumber(c.No_HP||''), email: c.Email||'',
                             address: c.Alamat||'', poin: c.Poin_Reward||0,
                             poinAkumulasi: c.Poin_Akumulasi||0, totalBelanja: c.Total_Transaksi||0
                         }; });
@@ -591,7 +591,9 @@
                         });
                     }
                     if (data.adminLogin)   authAdmin    = data.adminLogin;
-                    if (data.karyawanList) authKaryawan = data.karyawanList;
+                    if (data.karyawanList) authKaryawan = data.karyawanList.map(function(k) {
+                        return Object.assign({}, k, { nohp: normalizePhoneNumber(k.nohp||'') });
+                    });
                     if (data.salesHistory) {
                         state.salesHistory = data.salesHistory.map(function(s) {
                             if (!s.method && s.paymentMethod) s.method = s.paymentMethod;
@@ -626,12 +628,25 @@
                         if (pen.alamat_toko !== undefined) alamatTokoStruk = pen.alamat_toko;
                         if (pen.no_hp_toko  !== undefined) {
                             var hp = String(pen.no_hp_toko).trim();
-                            if (hp.startsWith('62')) hp = '0' + hp.slice(2);
                             if (hp.startsWith('+62')) hp = '0' + hp.slice(3);
+                            else if (hp.startsWith('62') && hp.length >= 10) hp = '0' + hp.slice(2);
+                            else if (/^[89]\d{7,}$/.test(hp)) hp = '0' + hp; // leading zero hilang karena disimpan sebagai angka
                             noHpTokoStruk = hp;
                         }
                         if (pen.footer_struk !== undefined && pen.footer_struk) footerStruk = pen.footer_struk;
                         if (pen.cancel_pwd  !== undefined && pen.cancel_pwd)  cancelRefundPwd = pen.cancel_pwd;
+                        // Load reward/poin settings
+                        if (pen.belanja_poin_min  !== undefined && pen.belanja_poin_min)  rewardData.belanjaPoinMin   = Number(pen.belanja_poin_min)  || 10000;
+                        if (pen.belanja_poin_dapat !== undefined && pen.belanja_poin_dapat) rewardData.belanjaPoinDapat = Number(pen.belanja_poin_dapat) || 100;
+                        if (pen.tier_bronze !== undefined) rewardData.tiers[0].min = Number(pen.tier_bronze) || 0;
+                        if (pen.tier_silver !== undefined) rewardData.tiers[1].min = Number(pen.tier_silver) || 500;
+                        if (pen.tier_gold   !== undefined) rewardData.tiers[2].min = Number(pen.tier_gold)   || 2000;
+                        if (pen.reward_list !== undefined && pen.reward_list) {
+                            try {
+                                var parsedRewards = JSON.parse(pen.reward_list);
+                                if (Array.isArray(parsedRewards)) rewardData.rewardList = parsedRewards;
+                            } catch(e) {}
+                        }
                     }
                     var wasFirstLoad = state.isLoading;
                     state.isLoading = false;
@@ -1440,12 +1455,76 @@
         }
         function handleSearch(e) {
             state.searchQuery = e.target.value.toLowerCase();
-            state.posPage = 1; 
-            if(state.activeMenu === 'Produk Saya') {
+            state.posPage = 1;
+            if (state.activeMenu === 'Produk Saya') {
                 state.productPage = 1;
-                renderContent();
+                renderProductTableOnly();
             } else {
                 renderPosGrid();
+            }
+        }
+
+        // Render hanya tabel produk tanpa me-render ulang seluruh halaman (agar input tidak kehilangan fokus)
+        function renderProductTableOnly() {
+            var container = document.getElementById('product-table-container');
+            if (!container) { renderContent(); return; }
+            var inp = document.activeElement;
+            var cursorPos = (inp && inp.id === 'product-search-input') ? inp.selectionStart : null;
+
+            var filteredList = state.products.filter(function(p) {
+                return p.name.toLowerCase().includes(state.searchQuery) || (p.barcode && p.barcode.toLowerCase().includes(state.searchQuery));
+            });
+            if (state.productSort === 'cat') filteredList.sort(function(a,b){ return a.category.localeCompare(b.category); });
+            else if (state.productSort === 'az') filteredList.sort(function(a,b){ return a.name.localeCompare(b.name); });
+            else if (state.productSort === 'za') filteredList.sort(function(a,b){ return b.name.localeCompare(a.name); });
+            else if (state.productSort === 'stock_high') filteredList.sort(function(a,b){ return b.stock - a.stock; });
+            else if (state.productSort === 'stock_low') filteredList.sort(function(a,b){ return a.stock - b.stock; });
+
+            var itemsPerPage = 10;
+            var totalPages = Math.max(1, Math.ceil(filteredList.length / itemsPerPage));
+            if (state.productPage > totalPages) state.productPage = totalPages;
+            var startIdx = (state.productPage - 1) * itemsPerPage;
+            var displayedList = filteredList.slice(startIdx, startIdx + itemsPerPage);
+
+            var rows = displayedList.length === 0
+                ? '<tr><td colspan="8" class="text-center py-6 text-gray-400 text-sm">Tidak ada produk ditemukan.</td></tr>'
+                : displayedList.map(function(product) {
+                    return '<tr class="border-b border-gray-100 hover:bg-gray-50/50">'
+                        + '<td class="py-3 px-5 text-sm font-mono text-gray-500"><div>' + product.id + '</div>' + (product.barcode ? '<div class="text-xs text-gray-400 mt-1">' + product.barcode + '</div>' : '') + '</td>'
+                        + '<td class="py-3 px-5 font-medium text-gray-800">' + product.name + '</td>'
+                        + '<td class="py-3 px-5 text-sm text-gray-600"><span class="px-2.5 py-1 bg-gray-100 rounded-full text-xs">' + product.category + '</span></td>'
+                        + '<td class="py-3 px-5 text-sm text-gray-800"><div class="font-medium">' + formatRp(product.price) + '</div>' + (product.discount > 0 ? '<div class="text-xs text-red-500 font-bold mt-1">Promo: -' + formatRp(product.discount) + '</div>' : '') + '</td>'
+                        + '<td class="py-3 px-5 text-center">' + (product.unlimited ? '<span class="text-sm font-bold text-purple-600">&#8734;</span>' : '<span class="text-sm font-bold ' + (product.stock <= product.minStock ? 'text-red-500' : 'text-green-500') + '">' + product.stock + '</span>') + '</td>'
+                        + '<td class="py-3 px-5 text-center">' + (product.unlimited ? '<span class="text-xs px-2 py-0.5 bg-purple-100 text-purple-600 rounded-full font-semibold">Unlimited</span>' : '<span class="text-sm font-medium text-gray-500">' + product.minStock + '</span>') + '</td>'
+                        + '<td class="py-3 px-5 text-center">' + ((product.poinPerUnit || 0) > 0 ? '<span class="text-sm font-bold text-green-600">+' + product.poinPerUnit + '</span>' : '<span class="text-sm text-gray-300">—</span>') + '</td>'
+                        + '<td class="py-3 px-5 flex justify-end gap-2">'
+                        + (currentUser && currentUser.role === 'admin' ? '<button onclick="quickStockUpdate(\'' + product.id + '\')" title="Ubah Stok Cepat" class="p-1.5 text-green-600 hover:bg-green-50 rounded transition-colors"><i class="ph ph-stack-plus text-lg"></i></button>' : '')
+                        + '<button onclick="openProductModal(\'' + product.id + '\')" title="Edit" class="p-1.5 text-blue-500 hover:bg-blue-50 rounded transition-colors"><i class="ph ph-pencil-simple text-lg"></i></button>'
+                        + '<button onclick="deleteProduct(\'' + product.id + '\')" title="Hapus" class="p-1.5 text-red-500 hover:bg-red-50 rounded transition-colors"><i class="ph ph-trash text-lg"></i></button>'
+                        + '</td></tr>';
+                }).join('');
+
+            var tableBody = container.querySelector('tbody');
+            if (tableBody) tableBody.innerHTML = rows;
+
+            var pagination = container.querySelector('.product-pagination');
+            if (pagination) {
+                if (totalPages > 1) {
+                    pagination.innerHTML = '<button onclick="changeProductPage(-1)" ' + (state.productPage===1?'disabled':'') + ' class="px-4 py-1.5 border border-gray-200 text-gray-600 text-sm font-medium rounded hover:bg-gray-50 disabled:opacity-50 transition-colors">< Prev</button>'
+                        + '<span class="text-sm text-gray-500 font-medium">Hal ' + state.productPage + ' dari ' + totalPages + '</span>'
+                        + '<button onclick="changeProductPage(1)" ' + (state.productPage===totalPages?'disabled':'') + ' class="px-4 py-1.5 border border-gray-200 text-gray-600 text-sm font-medium rounded hover:bg-gray-50 disabled:opacity-50 transition-colors">Next ></button>';
+                    pagination.style.display = 'flex';
+                } else {
+                    pagination.innerHTML = '';
+                    pagination.style.display = 'none';
+                }
+            }
+
+            // Restore fokus ke input search
+            var searchInput = document.getElementById('product-search-input');
+            if (searchInput && cursorPos !== null) {
+                searchInput.focus();
+                try { searchInput.setSelectionRange(cursorPos, cursorPos); } catch(e) {}
             }
         }
 
@@ -1533,6 +1612,291 @@
         let alamatTokoStruk = '';
         let noHpTokoStruk   = '';
         let footerStruk     = 'Terima kasih telah berbelanja!';
+
+        // --- BLUETOOTH THERMAL PRINTER 58mm ---
+        // Mendukung printer ESC/POS via Web Bluetooth (Chrome/Edge desktop & Android)
+        var btDevice        = null;   // BluetoothDevice yang sedang terhubung
+        var btCharacteristic = null;  // Karakteristik write untuk kirim data ESC/POS
+        var btPrintMode     = false;  // true = cetak via BT, false = window.print() seperti biasa
+
+        // UUID umum untuk printer Bluetooth SPP / BLE serial
+        var BT_SERVICE_UUID      = '000018f0-0000-1000-8000-00805f9b34fb'; // SPP-like BLE
+        var BT_CHAR_UUID         = '00002af1-0000-1000-8000-00805f9b34fb';
+        // Fallback UUID untuk printer lain
+        var BT_SERVICE_ALT       = '49535343-fe7d-4ae5-8fa9-9fafd205e455';
+        var BT_CHAR_ALT          = '49535343-1e4d-4bd9-ba61-23c647249616';
+
+        // Encode string ke Uint8Array (Latin-1 / Windows-1252 agar kompatibel ESC/POS)
+        function encodeESC(str) {
+            var arr = [];
+            for (var i = 0; i < str.length; i++) {
+                var c = str.charCodeAt(i);
+                arr.push(c < 256 ? c : 63); // '?' untuk karakter di luar range
+            }
+            return new Uint8Array(arr);
+        }
+
+        // Kirim chunk kecil agar tidak overflow buffer printer
+        async function btWrite(characteristic, data) {
+            var chunkSize = 200;
+            for (var i = 0; i < data.length; i += chunkSize) {
+                await characteristic.writeValue(data.slice(i, i + chunkSize));
+                await new Promise(function(r){ setTimeout(r, 30); });
+            }
+        }
+
+        // Sambungkan ke printer Bluetooth
+        async function btConnect() {
+            if (!navigator.bluetooth) {
+                showAlert('Tidak Didukung',
+                    'Web Bluetooth tidak tersedia.\n\nGunakan Chrome atau Edge di:\n• Android (HP/Tablet)\n• Windows / macOS / Linux desktop\n\nSafari dan Firefox belum mendukung Web Bluetooth.',
+                    'warning');
+                return;
+            }
+            try {
+                showToast('Mencari printer Bluetooth...', 'info');
+                var device = await navigator.bluetooth.requestDevice({
+                    filters: [
+                        { services: [BT_SERVICE_UUID] },
+                        { services: [BT_SERVICE_ALT] },
+                        { namePrefix: 'POS' },
+                        { namePrefix: 'Printer' },
+                        { namePrefix: 'RPP' },
+                        { namePrefix: 'MTP' },
+                        { namePrefix: 'Gprinter' },
+                        { namePrefix: 'GP' },
+                        { namePrefix: 'Xprinter' },
+                        { namePrefix: 'XP' },
+                        { namePrefix: 'EPSON' },
+                        { namePrefix: 'Star' },
+                    ],
+                    optionalServices: [BT_SERVICE_UUID, BT_SERVICE_ALT,
+                        '000018f0-0000-1000-8000-00805f9b34fb',
+                        '49535343-fe7d-4ae5-8fa9-9fafd205e455']
+                });
+                var server = await device.gatt.connect();
+                var characteristic = null;
+                // Coba service utama dulu
+                try {
+                    var service = await server.getPrimaryService(BT_SERVICE_UUID);
+                    characteristic = await service.getCharacteristic(BT_CHAR_UUID);
+                } catch(e) {
+                    // Fallback ke service alternatif
+                    try {
+                        var svc2 = await server.getPrimaryService(BT_SERVICE_ALT);
+                        characteristic = await svc2.getCharacteristic(BT_CHAR_ALT);
+                    } catch(e2) {
+                        // Coba ambil service pertama yang tersedia
+                        var services = await server.getPrimaryServices();
+                        for (var s of services) {
+                            var chars = await s.getCharacteristics();
+                            for (var ch of chars) {
+                                if (ch.properties.write || ch.properties.writeWithoutResponse) {
+                                    characteristic = ch; break;
+                                }
+                            }
+                            if (characteristic) break;
+                        }
+                    }
+                }
+                if (!characteristic) {
+                    showAlert('Printer Tidak Didukung',
+                        'Printer ditemukan tapi karakteristik write tidak tersedia.\n\nPastikan printer mendukung BLE / SPP dan sudah dalam mode pairing.',
+                        'error');
+                    return;
+                }
+                btDevice = device;
+                btCharacteristic = characteristic;
+                btPrintMode = true;
+                // Pantau disconnect
+                device.addEventListener('gattserverdisconnected', function() {
+                    btDevice = null; btCharacteristic = null; btPrintMode = false;
+                    showToast('Printer Bluetooth terputus.', 'warning');
+                    renderContent();
+                });
+                showToast('Terhubung ke printer: ' + device.name, 'success');
+                renderContent();
+            } catch(err) {
+                if (err.name !== 'NotFoundError') {
+                    showAlert('Gagal Konek', 'Error: ' + err.message, 'error');
+                }
+            }
+        }
+
+        // Putuskan koneksi Bluetooth
+        function btDisconnect() {
+            if (btDevice && btDevice.gatt.connected) btDevice.gatt.disconnect();
+            btDevice = null; btCharacteristic = null; btPrintMode = false;
+            showToast('Printer Bluetooth diputuskan.', 'info');
+            renderContent();
+        }
+
+        // Cetak test page ke printer BT
+        async function btTestPrint() {
+            if (!btCharacteristic) { showAlert('Belum Terhubung', 'Sambungkan printer Bluetooth terlebih dahulu.', 'warning'); return; }
+            try {
+                var ESC = 0x1B, GS = 0x1D;
+                var cmd = [];
+                // Init printer
+                cmd.push(ESC, 0x40);
+                // Center
+                cmd.push(ESC, 0x61, 0x01);
+                // Bold on
+                cmd.push(ESC, 0x45, 0x01);
+                var nameLine = namaTokoStruk || 'Z-TRONIK';
+                for (var c of encodeESC(nameLine)) cmd.push(c);
+                cmd.push(0x0A);
+                // Bold off
+                cmd.push(ESC, 0x45, 0x00);
+                for (var c of encodeESC('--- Test Print ---')) cmd.push(c);
+                cmd.push(0x0A);
+                for (var c of encodeESC('Printer terhubung!')) cmd.push(c);
+                cmd.push(0x0A, 0x0A, 0x0A);
+                // Cut
+                cmd.push(GS, 0x56, 0x42, 0x00);
+                await btWrite(btCharacteristic, new Uint8Array(cmd));
+                showToast('Test print berhasil!', 'success');
+            } catch(e) {
+                showAlert('Gagal Cetak', 'Error: ' + e.message, 'error');
+            }
+        }
+
+        // Bangun data ESC/POS dari opts struk — format 58mm (32 kolom)
+        function buildESCPOS(opts) {
+            var ESC = 0x1B, GS = 0x1D, LF = 0x0A;
+            var W = 32; // lebar karakter 58mm
+            var cmd = [];
+
+            function push(arr) { for (var b of arr) cmd.push(b); }
+            function pushStr(s) { push(encodeESC(s)); }
+            function nl(n) { for (var i = 0; i < (n||1); i++) cmd.push(LF); }
+            function center(s) {
+                s = String(s||'').slice(0, W);
+                var pad = Math.max(0, Math.floor((W - s.length) / 2));
+                return ' '.repeat(pad) + s;
+            }
+            function leftRight(l, r) {
+                l = String(l||''); r = String(r||'');
+                var space = W - l.length - r.length;
+                if (space < 1) { l = l.slice(0, W - r.length - 1); space = 1; }
+                return l + ' '.repeat(space) + r;
+            }
+            function line() { return '-'.repeat(W); }
+            function dline() { return '='.repeat(W); }
+
+            // Init
+            push([ESC, 0x40]);
+
+            // Nama toko — bold, center, font besar
+            push([ESC, 0x61, 0x01]);   // center
+            push([GS, 0x21, 0x11]);    // double height+width
+            push([ESC, 0x45, 0x01]);   // bold on
+            pushStr((opts.namaT || 'TOKO').slice(0, 16));
+            nl();
+            push([GS, 0x21, 0x00]);    // normal size
+            push([ESC, 0x45, 0x00]);   // bold off
+
+            // Alamat & telp
+            if (opts.alamatT) {
+                var lines = opts.alamatT.split('\n');
+                for (var l of lines) { pushStr(center(l.trim().slice(0, W))); nl(); }
+            }
+            if (opts.telp) { pushStr(center('Telp: ' + opts.telp)); nl(); }
+
+            push([ESC, 0x61, 0x00]);   // left align
+            pushStr(line()); nl();
+
+            // Header transaksi
+            push([ESC, 0x61, 0x00]);
+            pushStr(leftRight('No. Trx', opts.noTrx || '')); nl();
+            pushStr(leftRight('Tanggal', opts.tgl || '')); nl();
+            pushStr(leftRight('Jam',     opts.jam || '')); nl();
+            pushStr(leftRight('Kasir',   opts.kasir || (typeof currentUser !== 'undefined' && currentUser ? currentUser.nama : 'Admin'))); nl();
+            if (opts.memberName) {
+                pushStr(leftRight('Member',    opts.memberName.slice(0, 18))); nl();
+                pushStr(leftRight('ID Member', maskMemberId(opts.memberId))); nl();
+            }
+
+            pushStr(line()); nl();
+
+            // Item-item
+            if (opts.cartItems && opts.cartItems.length > 0) {
+                for (var item of opts.cartItems) {
+                    var p = item.price, qty = item.qty, tot = item.total;
+                    var name = item.name.length > W ? item.name.slice(0, W-1) : item.name;
+                    pushStr(name); nl();
+                    var qtyStr = '  ' + qty + ' x ' + formatRp(p);
+                    pushStr(leftRight(qtyStr, formatRp(tot))); nl();
+                }
+            }
+
+            pushStr(line()); nl();
+
+            // Subtotal, diskon, total
+            pushStr(leftRight('Subtotal', formatRp(opts.subtotal || 0))); nl();
+            if (opts.disc > 0) { pushStr(leftRight('Diskon', '-' + formatRp(opts.disc))); nl(); }
+            if (opts.poinDisc > 0) {
+                pushStr(leftRight('Poin (' + opts.poinRedeem + ')', '-' + formatRp(opts.poinDisc))); nl();
+            }
+            pushStr(dline()); nl();
+            push([ESC, 0x45, 0x01]);
+            pushStr(leftRight('TOTAL', formatRp(opts.grandTotal || 0))); nl();
+            push([ESC, 0x45, 0x00]);
+
+            if (opts.method === 'Tunai') {
+                pushStr(leftRight('Tunai',   formatRp(opts.received || 0))); nl();
+                pushStr(leftRight('Kembali', formatRp(opts.change   || 0))); nl();
+            }
+            pushStr(leftRight('Metode', opts.method || '')); nl();
+            pushStr(line()); nl();
+
+            // Footer — center
+            push([ESC, 0x61, 0x01]);
+            var footerLines = (opts.footer || '').split('\n');
+            for (var fl of footerLines) { if (fl.trim()) { pushStr(fl.trim().slice(0, W)); nl(); } }
+            nl(2);
+
+            // Paper cut
+            push([GS, 0x56, 0x42, 0x00]);
+
+            return new Uint8Array(cmd);
+        }
+
+        // Cetak struk via Bluetooth
+        async function btPrintStruk(opts) {
+            if (!btCharacteristic) {
+                showAlert('Printer Belum Terhubung',
+                    'Sambungkan printer Bluetooth 58mm terlebih dahulu di menu Pengaturan → Printer Bluetooth.',
+                    'warning');
+                return false;
+            }
+            try {
+                var data = buildESCPOS(opts);
+                await btWrite(btCharacteristic, data);
+                showToast('Struk berhasil dicetak via Bluetooth!', 'success');
+                return true;
+            } catch(e) {
+                showAlert('Gagal Cetak BT', 'Error: ' + e.message + '\n\nCoba putuskan dan sambungkan ulang printer.', 'error');
+                return false;
+            }
+        }
+
+        // --- HELPER: Normalisasi nomor HP → selalu awali dengan 0 ---
+        // Menangani format: 08xxx, 8xxx (leading zero hilang di spreadsheet),
+        // +628xxx, 628xxx, maupun format dengan tanda hubung/spasi
+        function normalizePhoneNumber(hp) {
+            if (!hp) return '';
+            hp = String(hp).trim();
+            // Hapus karakter selain digit dan +
+            var digits = hp.replace(/[^\d+]/g, '');
+            if (!digits) return hp; // kembalikan asli kalau bukan angka sama sekali
+            if (digits.startsWith('+62')) return '0' + digits.slice(3);
+            if (digits.startsWith('62') && digits.length >= 10) return '0' + digits.slice(2);
+            // Leading zero hilang karena Google Sheets simpan sebagai angka: 8xxx → 08xxx
+            if (/^[89]\d{7,}$/.test(digits)) return '0' + digits;
+            // Sudah benar dimulai 0
+            return digits;
+        }
 
         function checkout() {
             if (state.cart.length === 0) return;
@@ -1800,14 +2164,14 @@
                 return '<div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + name + '</div>'
                      + '<div style="display:flex;justify-content:space-between;align-items:baseline;padding-left:4px">'
                      + '<span style="white-space:nowrap">&nbsp;' + item.qty + ' x ' + formatRp(p) + '</span>'
-                     + '<span style="flex-shrink:0;white-space:nowrap;padding-left:2px">' + formatRp(total) + '</span></div>';
+                     + '<span style="flex-shrink:0;white-space:nowrap;padding-left:2px">' + total.toLocaleString('id-ID',{style:'currency',currency:'IDR',minimumFractionDigits:0}) + '</span></div>';
             }).join('');
 
             var subtotal = state.cart.reduce(function(s, i){ return s + getItemActivePrice(i) * i.qty; }, 0);
             var disc = state.discountType === 'Rp' ? state.discountValue : subtotal * (state.discountValue/100);
             var poinDisc = state.posPoinRedeem || 0;
 
-            var html = buildStruHtml({
+            var opts = {
                 namaT:       namaTokoStruk,
                 alamatT:     alamatTokoStruk,
                 telp:        noHpTokoStruk,
@@ -1817,6 +2181,9 @@
                 memberName:  state.posActiveMember ? state.posActiveMember.name : '',
                 memberId:    state.posActiveMember ? state.posActiveMember.id   : '',
                 itemsHtml:   itemsHtml,
+                cartItems:   state.cart.map(function(item){
+                    return { name: item.name, qty: item.qty, price: getItemActivePrice(item), total: getItemActivePrice(item)*item.qty };
+                }),
                 subtotal:    subtotal,
                 subtotalFmt: formatRp(subtotal),
                 disc:        disc,
@@ -1832,9 +2199,18 @@
                 change:      change,
                 changeFmt:   formatRp(change),
                 footer:      footerStruk
-            });
+            };
 
+            // Jika printer Bluetooth terhubung → cetak ESC/POS via BT
+            if (btPrintMode && btCharacteristic) {
+                btPrintStruk(opts);
+                return;
+            }
+
+            // Fallback: cetak via browser (window.print)
+            var html = buildStruHtml(opts);
             var printWin = window.open('','_blank','width=300,height=600');
+            if (!printWin) { showToast('Popup diblokir browser. Izinkan popup untuk mencetak.', 'warning'); return; }
             printWin.document.write('<html><body style="margin:0">' + html + '</body></html>');
             printWin.document.close();
             printWin.focus();
@@ -2401,9 +2777,10 @@
                 const displayedList = filteredList.slice(startIdx, startIdx + itemsPerPage);
 
                 tableContent = `
+                    <div id="product-table-container">
                     <div class="p-4 border-b border-gray-100 flex flex-col sm:flex-row gap-4 justify-between bg-gray-50/50">
                         <div class="relative w-full max-w-sm">
-                            <input type="text" placeholder="Cari nama atau barcode produk..." value="${state.searchQuery}" onkeyup="handleSearch(event)" class="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-md focus:ring-1 focus:ring-green-500 focus:outline-none text-sm" />
+                            <input type="text" id="product-search-input" placeholder="Cari nama atau barcode produk..." value="${state.searchQuery}" oninput="handleSearch(event)" class="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-md focus:ring-1 focus:ring-green-500 focus:outline-none text-sm" />
                             <i class="ph ph-magnifying-glass absolute left-3 top-2.5 text-gray-400"></i>
                         </div>
                         <select onchange="handleProductSortChange(event)" class="px-4 py-2 border border-gray-200 rounded-md focus:ring-1 focus:ring-green-500 focus:outline-none text-sm bg-white min-w-[150px]">
@@ -2472,15 +2849,13 @@
                     </div>
                 `;
 
+                tableContent += `<div class="product-pagination p-4 border-t border-gray-100 justify-between items-center bg-white" style="display:${totalPages > 1 ? 'flex' : 'none'};">`;
                 if (totalPages > 1) {
-                    tableContent += `
-                        <div class="p-4 border-t border-gray-100 flex justify-between items-center bg-white">
-                            <button onclick="changeProductPage(-1)" ${state.productPage === 1 ? 'disabled' : ''} class="px-4 py-1.5 border border-gray-200 text-gray-600 text-sm font-medium rounded hover:bg-gray-50 disabled:opacity-50 transition-colors">< Prev</button>
-                            <span class="text-sm text-gray-500 font-medium">Hal ${state.productPage} dari ${totalPages}</span>
-                            <button onclick="changeProductPage(1)" ${state.productPage === totalPages ? 'disabled' : ''} class="px-4 py-1.5 border border-gray-200 text-gray-600 text-sm font-medium rounded hover:bg-gray-50 disabled:opacity-50 transition-colors">Next ></button>
-                        </div>
-                    `;
+                    tableContent += `<button onclick="changeProductPage(-1)" ${state.productPage === 1 ? 'disabled' : ''} class="px-4 py-1.5 border border-gray-200 text-gray-600 text-sm font-medium rounded hover:bg-gray-50 disabled:opacity-50 transition-colors">< Prev</button>`
+                        + `<span class="text-sm text-gray-500 font-medium">Hal ${state.productPage} dari ${totalPages}</span>`
+                        + `<button onclick="changeProductPage(1)" ${state.productPage === totalPages ? 'disabled' : ''} class="px-4 py-1.5 border border-gray-200 text-gray-600 text-sm font-medium rounded hover:bg-gray-50 disabled:opacity-50 transition-colors">Next ></button>`;
                 }
+                tableContent += `</div></div>`; // tutup .product-pagination dan #product-table-container
             }
 
             return `
@@ -2540,6 +2915,50 @@
                             <input type="file" id="qris-file" accept="image/*" onchange="uploadQrisImage(event)" class="text-sm w-full" />
                             ${qrisImageBase64 ? `<button onclick="deleteQrisImage()" class="mt-2 text-xs text-red-500 hover:underline">Hapus foto QRIS</button>` : ''}
                         </div>
+                    </div>
+
+                    <!-- Panel Printer Bluetooth -->
+                    <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                        <h2 class="text-lg font-semibold text-gray-800 mb-1 flex items-center gap-2">
+                            <i class="ph ph-bluetooth text-blue-500 text-xl"></i> Printer Bluetooth 58mm
+                        </h2>
+                        <p class="text-sm text-gray-500 mb-4">Hubungkan printer thermal 58mm via Bluetooth untuk cetak struk langsung tanpa dialog print browser. Mendukung printer ESC/POS BLE (RPP, Xprinter, Gprinter, dll).</p>
+
+                        ${btDevice && btCharacteristic ? `
+                        <!-- Status: Terhubung -->
+                        <div class="flex items-center gap-3 p-3 bg-green-50 border border-green-200 rounded-xl mb-4">
+                            <div class="w-3 h-3 rounded-full bg-green-500 animate-pulse shrink-0"></div>
+                            <div class="flex-1 min-w-0">
+                                <p class="text-sm font-semibold text-green-800">Terhubung</p>
+                                <p class="text-xs text-green-600 truncate">${btDevice ? btDevice.name || 'Printer Bluetooth' : ''}</p>
+                            </div>
+                            <span class="text-xs px-2 py-1 bg-green-100 text-green-700 rounded-full font-semibold">AKTIF</span>
+                        </div>
+                        <div class="flex gap-2 flex-wrap">
+                            <button onclick="btTestPrint()" class="px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2">
+                                <i class="ph ph-printer text-base"></i> Test Print
+                            </button>
+                            <button onclick="btDisconnect()" class="px-4 py-2 bg-red-50 text-red-600 text-sm font-semibold rounded-lg hover:bg-red-100 border border-red-200 transition-colors flex items-center gap-2">
+                                <i class="ph ph-bluetooth-slash text-base"></i> Putuskan
+                            </button>
+                        </div>
+                        ` : `
+                        <!-- Status: Belum terhubung -->
+                        <div class="flex items-center gap-3 p-3 bg-gray-50 border border-gray-200 rounded-xl mb-4">
+                            <div class="w-3 h-3 rounded-full bg-gray-300 shrink-0"></div>
+                            <p class="text-sm text-gray-500">Belum ada printer terhubung. Mode cetak: browser (window.print)</p>
+                        </div>
+                        <button onclick="btConnect()" class="px-5 py-2.5 bg-blue-600 text-white text-sm font-bold rounded-xl hover:bg-blue-700 transition-colors flex items-center gap-2 shadow-sm">
+                            <i class="ph ph-bluetooth text-lg"></i> Cari & Sambungkan Printer
+                        </button>
+                        <div class="mt-4 p-3 bg-blue-50 border border-blue-100 rounded-xl text-xs text-blue-700 space-y-1">
+                            <p class="font-semibold">Syarat agar Bluetooth berfungsi:</p>
+                            <p>• Gunakan <strong>Google Chrome</strong> atau <strong>Microsoft Edge</strong> (bukan Safari/Firefox)</p>
+                            <p>• Di Android: aktifkan Bluetooth & izinkan lokasi di browser</p>
+                            <p>• Di PC/Mac: aktifkan Bluetooth, pastikan printer sudah dalam mode pairing</p>
+                            <p>• Printer harus mendukung BLE (Bluetooth Low Energy) atau SPP via BLE</p>
+                        </div>
+                        `}
                     </div>
                 </div>
 
@@ -2663,8 +3082,7 @@
             namaTokoStruk   = document.getElementById('set-namatoko').value.trim() || 'Z-TRONIK';
             alamatTokoStruk = document.getElementById('set-alamat').value.trim();
             var _hp = document.getElementById('set-nohp').value.trim();
-            if (_hp.startsWith('+62')) _hp = '0' + _hp.slice(3);
-            else if (_hp.startsWith('62') && _hp.length >= 10) _hp = '0' + _hp.slice(2);
+            _hp = normalizePhoneNumber(_hp);
             noHpTokoStruk   = _hp;
             footerStruk     = document.getElementById('set-footer').value.trim() || 'Terima kasih!';
             if (GAS_URL) {
@@ -3058,8 +3476,8 @@
                         <div class="p-4 border-b border-gray-100 flex flex-col sm:flex-row gap-3 justify-between bg-gray-50/50">
                             <div class="flex gap-2 flex-1">
                                 <div class="relative flex-1 max-w-sm">
-                                    <input type="text" placeholder="Cari nama, ID, atau kategori..." value="${state.opnameSearch}"
-                                        onkeyup="handleOpnameSearch(event)"
+                                    <input type="text" id="opname-search-input" placeholder="Cari nama, ID, atau kategori..." value="${state.opnameSearch}"
+                                        oninput="handleOpnameSearch(event)"
                                         class="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-md focus:ring-1 focus:ring-green-500 focus:outline-none text-sm" />
                                     <i class="ph ph-magnifying-glass absolute left-3 top-2.5 text-gray-400"></i>
                                 </div>
@@ -3076,6 +3494,7 @@
                                 <option value="diff_plus"  ${state.opnameSort==='diff_plus' ?'selected':''}>Selisih Terbesar</option>
                             </select>
                         </div>
+                        <div id="opname-table-container">
                         <div class="overflow-x-auto">
                             <table class="w-full text-left border-collapse">
                                 <thead>
@@ -3088,10 +3507,13 @@
                                         <th class="py-3 px-4 font-medium text-center">Selisih</th>
                                     </tr>
                                 </thead>
-                                <tbody>${rows || '<tr><td colspan="6" class="text-center py-6 text-gray-400 text-sm">Produk tidak ditemukan.</td></tr>'}</tbody>
+                                <tbody id="opname-tbody">${rows || '<tr><td colspan="6" class="text-center py-6 text-gray-400 text-sm">Produk tidak ditemukan.</td></tr>'}</tbody>
                             </table>
                         </div>
+                        <div class="opname-pagination">
                         ${opnamePagination}
+                        </div>
+                        </div>
                         <div class="px-4 pb-3 text-xs text-gray-400 text-center">
                             Isi "Stok Aktual" sesuai jumlah fisik. <span class="text-blue-500 font-bold">Biru = kelebihan</span>, <span class="text-red-500 font-bold">Merah = kekurangan</span>.
                         </div>
@@ -3263,6 +3685,23 @@
         }
 
         // Simpan reward baru
+        // Kirim seluruh data rewardData ke GAS untuk disimpan di sheet Pengaturan
+        function syncRewardDataToGAS() {
+            if (!GAS_URL) return;
+            var payload = {
+                action: 'savePoinSettings',
+                poinSettings: {
+                    belanjaPoinMin:   rewardData.belanjaPoinMin,
+                    belanjaPoinDapat: rewardData.belanjaPoinDapat,
+                    tierBronze:       rewardData.tiers[0].min,
+                    tierSilver:       rewardData.tiers[1].min,
+                    tierGold:         rewardData.tiers[2].min,
+                    rewardList:       JSON.stringify(rewardData.rewardList)
+                }
+            };
+            gasPost(payload).catch(function(){});
+        }
+
         function saveRewardItem(e) {
             e.preventDefault();
             const name = document.getElementById('rwd-name').value.trim();
@@ -3271,13 +3710,60 @@
             if (!name || poin <= 0) { showAlert('Input Tidak Valid', 'Isi nama reward dan poin yang dibutuhkan.', 'warning'); return; }
             const id = 'RWD' + Date.now().toString().slice(-6);
             rewardData.rewardList.push({ id, name, poinDibutuhkan: poin, deskripsi: desk });
+            syncRewardDataToGAS();
             renderContent();
-            showToast('Reward baru ditambahkan!', 'success');
+            showToast('Reward baru ditambahkan & disimpan!', 'success');
+        }
+
+        // Edit reward yang sudah ada
+        var _editRewardIdx = -1;
+        function openEditRewardItem(idx) {
+            _editRewardIdx = idx;
+            var r = rewardData.rewardList[idx];
+            if (!r) return;
+            var overlay = document.getElementById('notif-overlay');
+            var iconWrap = document.getElementById('notif-icon-wrap');
+            var titleEl  = document.getElementById('notif-title');
+            var msgEl    = document.getElementById('notif-msg');
+            var btns     = document.getElementById('notif-buttons');
+            iconWrap.className = 'w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4 bg-purple-100';
+            iconWrap.innerHTML = '<i class="ph ph-pencil-simple text-3xl text-purple-600"></i>';
+            titleEl.innerText  = 'Edit Reward';
+            msgEl.innerHTML = '<div class="space-y-3 text-left">'
+                + '<div><label class="text-xs font-semibold text-gray-600 block mb-1">Nama Reward</label>'
+                + '<input id="edit-rwd-name" type="text" value="' + r.name.replace(/"/g,'&quot;') + '" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-1 focus:ring-purple-500 focus:outline-none" /></div>'
+                + '<div class="grid grid-cols-2 gap-3">'
+                + '<div><label class="text-xs font-semibold text-gray-600 block mb-1">Min. Poin Tukar</label>'
+                + '<input id="edit-rwd-poin" type="number" min="1" value="' + r.poinDibutuhkan + '" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-1 focus:ring-purple-500 focus:outline-none" /></div>'
+                + '<div><label class="text-xs font-semibold text-gray-600 block mb-1">Keterangan</label>'
+                + '<input id="edit-rwd-desk" type="text" value="' + (r.deskripsi||'').replace(/"/g,'&quot;') + '" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-1 focus:ring-purple-500 focus:outline-none" /></div>'
+                + '</div></div>';
+            btns.innerHTML = '<button onclick="closeNotif()" class="px-4 py-2 border border-gray-200 text-gray-600 font-semibold rounded-xl hover:bg-gray-50 text-sm">Batal</button>'
+                + '<button onclick="submitEditRewardItem()" class="px-4 py-2 bg-purple-600 text-white font-bold rounded-xl hover:bg-purple-700 text-sm flex items-center gap-2"><i class="ph ph-floppy-disk"></i> Simpan</button>';
+            overlay.classList.remove('hidden');
+            setTimeout(function(){ var el = document.getElementById('edit-rwd-name'); if(el) el.focus(); }, 100);
+        }
+
+        function submitEditRewardItem() {
+            var name = (document.getElementById('edit-rwd-name').value || '').trim();
+            var poin = Number(document.getElementById('edit-rwd-poin').value) || 0;
+            var desk = (document.getElementById('edit-rwd-desk').value || '').trim();
+            if (!name || poin <= 0) { showAlert('Input Tidak Valid', 'Isi nama reward dan poin yang dibutuhkan.', 'warning'); return; }
+            var r = rewardData.rewardList[_editRewardIdx];
+            if (!r) { closeNotif(); return; }
+            r.name = name;
+            r.poinDibutuhkan = poin;
+            r.deskripsi = desk;
+            closeNotif();
+            syncRewardDataToGAS();
+            renderContent();
+            showToast('Reward berhasil diperbarui!', 'success');
         }
 
         function deleteRewardItem(idx) {
-            showConfirm('Hapus Reward', `Hapus reward "${rewardData.rewardList[idx].name}"?`, 'error', () => {
+            showConfirm('Hapus Reward', 'Hapus reward "' + rewardData.rewardList[idx].name + '"?', 'error', function() {
                 rewardData.rewardList.splice(idx, 1);
+                syncRewardDataToGAS();
                 renderContent();
             });
         }
@@ -3296,8 +3782,9 @@
             rewardData.tiers[1].min = tierS;
             rewardData.tiers[2].min = tierG;
             rewardData.customers = state.customers.map(c => ({ ...c, tier: getTierInfo(c.poin).name }));
+            syncRewardDataToGAS();
             renderContent();
-            showToast('Pengaturan poin disimpan!', 'success');
+            showToast('Pengaturan poin disimpan ke spreadsheet!', 'success');
         }
 
         function getPoinRewardHTML() {
@@ -3321,7 +3808,10 @@
                     rewardRows += "<div class=\"flex items-center justify-between bg-purple-50 border border-purple-100 rounded-lg px-3 py-2 text-sm\">"
                         + "<div class=\"min-w-0\"><span class=\"font-semibold text-purple-800 block truncate\">" + r.name + "</span>"
                         + "<span class=\"text-xs text-purple-600\">" + r.poinDibutuhkan + " poin" + (r.deskripsi ? " &middot; " + r.deskripsi : "") + "</span></div>"
-                        + "<button onclick=\"deleteRewardItem(" + realIdx + ")\" class=\"text-red-400 hover:text-red-600 ml-2 shrink-0\"><i class=\"ph ph-trash text-sm\"></i></button>"
+                        + "<div class=\"flex items-center gap-1 ml-2 shrink-0\">"
+                        + "<button onclick=\"openEditRewardItem(" + realIdx + ")\" title=\"Edit\" class=\"p-1 text-purple-500 hover:text-purple-700 hover:bg-purple-100 rounded transition-colors\"><i class=\"ph ph-pencil-simple text-sm\"></i></button>"
+                        + "<button onclick=\"deleteRewardItem(" + realIdx + ")\" title=\"Hapus\" class=\"p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors\"><i class=\"ph ph-trash text-sm\"></i></button>"
+                        + "</div>"
                         + "</div>";
                 });
             }
@@ -3666,17 +4156,19 @@
                         <div class="px-4 py-3 border-b border-gray-100 bg-gray-50/50">
                             <div class="relative max-w-sm">
                                 <input type="text"
+                                    id="laporan-search-input"
                                     placeholder="Cari no. transaksi, nama item, member, metode..."
                                     value="${state.laporanSearch}"
-                                    oninput="state.laporanSearch=this.value; state.laporanPage=1; renderContent()"
+                                    oninput="handleLaporanSearch(event)"
                                     class="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-green-400 focus:outline-none bg-white" />
                                 <i class="ph ph-magnifying-glass absolute left-3 top-2.5 text-gray-400"></i>
-                                ${q ? `<button onclick="state.laporanSearch=''; state.laporanPage=1; renderContent()" class="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600"><i class="ph ph-x text-sm"></i></button>` : ''}
+                                ${q ? `<button onclick="state.laporanSearch=''; state.laporanPage=1; renderLaporanTableOnly()" class="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600"><i class="ph ph-x text-sm"></i></button>` : ''}
                             </div>
-                            ${q ? `<p class="text-xs text-gray-400 mt-1.5">Menampilkan ${filtered.length} hasil untuk "<strong>${q}</strong>"</p>` : ''}
+                            <p id="laporan-search-info" class="text-xs text-gray-400 mt-1.5" style="display:${q ? 'block' : 'none'};">Menampilkan ${filtered.length} hasil untuk "<strong>${q}</strong>"</p>
                         </div>
 
                         <!-- Table -->
+                        <div id="laporan-table-container">
                         <div class="overflow-x-auto">
                             <table class="w-full text-left border-collapse text-sm">
                                 <thead>
@@ -3690,13 +4182,127 @@
                                         <th class="py-3 px-4 font-medium text-center">Aksi</th>
                                     </tr>
                                 </thead>
-                                <tbody>${rows}</tbody>
+                                <tbody id="laporan-tbody">${rows}</tbody>
                             </table>
                         </div>
-                        ${pagination}
+                        <div class="laporan-pagination">${pagination}</div>
+                        </div>
                     </div>
                 </div>
             `;
+        }
+
+        function handleLaporanSearch(e) {
+            state.laporanSearch = e.target.value;
+            state.laporanPage   = 1;
+            renderLaporanTableOnly();
+        }
+
+        function renderLaporanTableOnly() {
+            var container = document.getElementById('laporan-table-container');
+            if (!container) { renderContent(); return; }
+            var inp = document.activeElement;
+            var cursorPos = (inp && inp.id === 'laporan-search-input') ? inp.selectionStart : null;
+
+            var filter  = state.laporanFilter;
+            var q = (state.laporanSearch || '').toLowerCase().trim();
+            var filtered = getFilteredSales(filter);
+            if (q) {
+                filtered = filtered.filter(function(s) {
+                    return s.id.toLowerCase().includes(q)
+                        || (s.member && s.member.toLowerCase().includes(q))
+                        || (s.method && s.method.toLowerCase().includes(q))
+                        || s.items.some(function(it){ return it.name.toLowerCase().includes(q); })
+                        || String(s.total).includes(q);
+                });
+            }
+
+            var perPage    = 10;
+            var totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
+            if (state.laporanPage > totalPages) state.laporanPage = totalPages;
+            var start = (state.laporanPage - 1) * perPage;
+            var shown = filtered.slice(start, start + perPage);
+
+            var methodColors = { Tunai: 'bg-green-100 text-green-700', QRIS: 'bg-blue-100 text-blue-700', Kartu: 'bg-purple-100 text-purple-700' };
+            var tbody = container.querySelector('#laporan-tbody');
+            if (tbody) {
+                if (shown.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="7" class="text-center py-12 text-gray-400">'
+                        + '<i class="ph ph-magnifying-glass text-3xl mb-2 block opacity-40"></i>'
+                        + (q ? 'Tidak ada transaksi yang cocok dengan pencarian "' + q + '".' : 'Belum ada transaksi untuk periode ini.')
+                        + '</td></tr>';
+                } else {
+                    tbody.innerHTML = shown.map(function(s) {
+                        var d = new Date(s.date);
+                        var tgl = d.toLocaleDateString('id-ID',{day:'2-digit',month:'2-digit',year:'numeric'});
+                        var jam = d.toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit'});
+                        var itemStr = s.items.map(function(it){ return it.name + ' (' + it.qty + ')'; }).join(', ');
+                        var rowClass = s.refunded ? 'border-b border-gray-100 bg-red-50/40 opacity-70' : 'border-b border-gray-100 hover:bg-gray-50/50';
+                        var methColor = methodColors[s.method] || 'bg-gray-100 text-gray-600';
+                        return '<tr class="' + rowClass + '">'
+                            + '<td class="py-3 px-4 text-xs font-mono text-gray-500">' + s.id + '</td>'
+                            + '<td class="py-3 px-4 text-sm text-gray-700 whitespace-nowrap">' + tgl + ' ' + jam + '</td>'
+                            + '<td class="py-3 px-4 text-sm text-gray-600 max-w-[180px] truncate" title="' + itemStr + '">' + itemStr + '</td>'
+                            + '<td class="py-3 px-4 text-sm text-gray-600">' + (s.member || '-') + '</td>'
+                            + '<td class="py-3 px-4 text-center"><span class="text-xs px-2 py-0.5 rounded-full font-semibold ' + methColor + '">' + s.method + '</span></td>'
+                            + '<td class="py-3 px-4 text-right font-bold text-gray-800">' + formatRp(s.total) + '</td>'
+                            + '<td class="py-3 px-4 text-center"><div class="flex items-center justify-center gap-1.5 flex-wrap">'
+                            + '<button onclick="previewStrukLaporan(\'' + s.id + '\')" class="px-2 py-1 bg-green-50 text-green-700 text-xs font-semibold rounded-lg hover:bg-green-100 border border-green-200 flex items-center gap-1"><i class="ph ph-receipt text-sm"></i> Struk</button>'
+                            + '<button onclick="downloadTrxPDF(\'' + s.id + '\')" title="Unduh PDF" class="px-2 py-1 bg-blue-50 text-blue-700 text-xs font-semibold rounded-lg hover:bg-blue-100 border border-blue-200 flex items-center gap-1"><i class="ph ph-download-simple text-sm"></i> PDF</button>'
+                            + (s.refunded ? '<span class="px-2 py-1 bg-gray-100 text-gray-400 text-xs font-semibold rounded-lg border border-gray-200">Dibatalkan</span>'
+                                : '<button onclick="batalkanTransaksi(\'' + s.id + '\')" class="px-2 py-1 bg-red-50 text-red-600 text-xs font-semibold rounded-lg hover:bg-red-100 border border-red-200 flex items-center gap-1"><i class="ph ph-arrow-u-up-left text-sm"></i> Batalkan</button>')
+                            + '</div></td></tr>';
+                    }).join('');
+                }
+            }
+
+            // Update info text
+            var infoEl = document.getElementById('laporan-search-info');
+            if (infoEl) {
+                if (q) {
+                    infoEl.innerHTML = 'Menampilkan ' + filtered.length + ' hasil untuk "<strong>' + q + '</strong>"';
+                    infoEl.style.display = 'block';
+                } else {
+                    infoEl.style.display = 'none';
+                }
+            }
+
+            // Update clear button
+            var searchInput = document.getElementById('laporan-search-input');
+            if (searchInput) {
+                var clearBtn = searchInput.parentNode.querySelector('button');
+                if (q && !clearBtn) {
+                    var btn = document.createElement('button');
+                    btn.onclick = function(){ state.laporanSearch=''; state.laporanPage=1; renderLaporanTableOnly(); };
+                    btn.className = 'absolute right-3 top-2.5 text-gray-400 hover:text-gray-600';
+                    btn.innerHTML = '<i class="ph ph-x text-sm"></i>';
+                    searchInput.parentNode.appendChild(btn);
+                } else if (!q && clearBtn) {
+                    clearBtn.remove();
+                }
+            }
+
+            // Update pagination
+            var paginationEl = container.querySelector('.laporan-pagination');
+            if (paginationEl) {
+                if (totalPages > 1) {
+                    paginationEl.innerHTML = '<div class="p-4 border-t border-gray-100 flex justify-between items-center">'
+                        + '<button onclick="state.laporanPage--; renderLaporanTableOnly()" ' + (state.laporanPage===1?'disabled':'') + ' class="px-4 py-1.5 border border-gray-200 text-gray-600 text-sm rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors">&lsaquo; Prev</button>'
+                        + '<span class="text-sm text-gray-500">Hal ' + state.laporanPage + ' dari ' + totalPages + ' &bull; ' + filtered.length + ' transaksi</span>'
+                        + '<button onclick="state.laporanPage++; renderLaporanTableOnly()" ' + (state.laporanPage===totalPages?'disabled':'') + ' class="px-4 py-1.5 border border-gray-200 text-gray-600 text-sm rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors">Next &rsaquo;</button>'
+                        + '</div>';
+                } else if (filtered.length > 0) {
+                    paginationEl.innerHTML = '<div class="p-3 text-center text-xs text-gray-400">' + filtered.length + ' transaksi</div>';
+                } else {
+                    paginationEl.innerHTML = '';
+                }
+            }
+
+            // Restore fokus
+            if (searchInput && cursorPos !== null) {
+                searchInput.focus();
+                try { searchInput.setSelectionRange(cursorPos, cursorPos); } catch(ex) {}
+            }
         }
 
         // ── FUNGSI BATALKAN TRANSAKSI (REFUND) ───────────
@@ -4245,7 +4851,7 @@
             const customerData = {
                 id: document.getElementById('c-id').value,
                 name: document.getElementById('c-name').value,
-                phone: document.getElementById('c-phone').value,
+                phone: normalizePhoneNumber(document.getElementById('c-phone').value),
                 address: document.getElementById('c-address').value,
                 email: existingCust ? existingCust.email : '',
                 poin: isEdit ? (Number(document.getElementById('c-poin').value) || 0) : 0,
@@ -4315,7 +4921,73 @@
         function handleCustomerSearch(e) {
             state.customerSearch = e.target.value.toLowerCase();
             state.customerPage = 1;
-            renderContent();
+            renderCustomerTableOnly();
+        }
+
+        // Render hanya tabel pelanggan tanpa full re-render (agar input tidak kehilangan fokus)
+        function renderCustomerTableOnly() {
+            var container = document.getElementById('customer-table-container');
+            if (!container) { renderContent(); return; }
+            var inp = document.activeElement;
+            var cursorPos = (inp && inp.id === 'customer-search-input') ? inp.selectionStart : null;
+
+            var q = state.customerSearch;
+            var list = state.customers.filter(function(c) {
+                return c.name.toLowerCase().includes(q) || (c.phone && c.phone.toLowerCase().includes(q)) || (c.id && c.id.toLowerCase().includes(q));
+            });
+            if (state.customerSort === 'az') list.sort(function(a,b){ return a.name.localeCompare(b.name); });
+            else if (state.customerSort === 'za') list.sort(function(a,b){ return b.name.localeCompare(a.name); });
+            else if (state.customerSort === 'addr') list.sort(function(a,b){ return (a.address||'').localeCompare(b.address||''); });
+            else if (state.customerSort === 'poin_high') list.sort(function(a,b){ return (b.poin||0)-(a.poin||0); });
+            else if (state.customerSort === 'akum_high') list.sort(function(a,b){ return (b.poinAkumulasi||0)-(a.poinAkumulasi||0); });
+
+            var itemsPerPage = 10;
+            var totalPages = Math.max(1, Math.ceil(list.length / itemsPerPage));
+            if (state.customerPage > totalPages) state.customerPage = totalPages;
+            var pageItems = list.slice((state.customerPage - 1) * itemsPerPage, state.customerPage * itemsPerPage);
+
+            var tbody = container.querySelector('#customer-tbody');
+            if (tbody) {
+                if (pageItems.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="7" class="text-center py-6 text-gray-400 text-sm">Tidak ada pelanggan ditemukan.</td></tr>';
+                } else {
+                    tbody.innerHTML = pageItems.map(function(c) {
+                        var tierColor = c.tier==='Gold' ? '#d97706' : c.tier==='Silver' ? '#6b7280' : '#16a34a';
+                        return '<tr class="border-b border-gray-100 hover:bg-gray-50/50">'
+                            + '<td class="py-3 px-4 text-sm font-mono text-gray-500">' + c.id + '</td>'
+                            + '<td class="py-3 px-4"><div class="font-medium text-sm text-gray-800">' + c.name + '</div>'
+                            + '<span style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:999px;background:' + tierColor + '20;color:' + tierColor + ';">' + (c.tier||'Bronze') + '</span></td>'
+                            + '<td class="py-3 px-4 text-sm text-gray-600">' + (c.phone||'-') + '</td>'
+                            + '<td class="py-3 px-4 text-sm text-gray-600">' + (c.address||'-') + '</td>'
+                            + '<td class="py-3 px-4 text-center"><span class="text-sm font-bold text-green-600">' + (c.poin||0).toLocaleString('id-ID') + '</span></td>'
+                            + '<td class="py-3 px-4 text-center"><span class="text-sm font-semibold text-purple-600">' + (c.poinAkumulasi||0).toLocaleString('id-ID') + '</span></td>'
+                            + '<td class="py-3 px-4 flex justify-end gap-1.5">'
+                            + (currentUser && currentUser.role !== 'admin' ? '' : '<button onclick="openCustomerModal(\'' + c.id + '\')" title="Edit" class="p-1.5 text-blue-500 hover:bg-blue-50 rounded transition-colors"><i class="ph ph-pencil-simple text-lg"></i></button>')
+                            + (currentUser && currentUser.role !== 'admin' ? '' : '<button onclick="resetAkumulasiSatu(\'' + c.id + '\')" title="Reset Akumulasi" class="p-1.5 text-purple-500 hover:bg-purple-50 rounded transition-colors"><i class="ph ph-arrow-counter-clockwise text-lg"></i></button>')
+                            + (currentUser && currentUser.role !== 'admin' ? '' : '<button onclick="deleteCustomer(\'' + c.id + '\')" title="Hapus" class="p-1.5 text-red-500 hover:bg-red-50 rounded transition-colors"><i class="ph ph-trash text-lg"></i></button>')
+                            + '</td></tr>';
+                    }).join('');
+                }
+            }
+
+            var pagination = container.querySelector('.customer-pagination');
+            if (pagination) {
+                if (totalPages > 1) {
+                    pagination.innerHTML = '<button onclick="changeCustomerPage(-1)" ' + (state.customerPage===1?'disabled':'') + ' class="px-4 py-1.5 border border-gray-200 text-gray-600 text-sm font-medium rounded hover:bg-gray-50 disabled:opacity-50 transition-colors">< Prev</button>'
+                        + '<span class="text-sm text-gray-500 font-medium">Hal ' + state.customerPage + ' dari ' + totalPages + '</span>'
+                        + '<button onclick="changeCustomerPage(1)" ' + (state.customerPage===totalPages?'disabled':'') + ' class="px-4 py-1.5 border border-gray-200 text-gray-600 text-sm font-medium rounded hover:bg-gray-50 disabled:opacity-50 transition-colors">Next ></button>';
+                    pagination.style.display = 'flex';
+                } else {
+                    pagination.innerHTML = '';
+                    pagination.style.display = 'none';
+                }
+            }
+
+            var searchInput = document.getElementById('customer-search-input');
+            if (searchInput && cursorPos !== null) {
+                searchInput.focus();
+                try { searchInput.setSelectionRange(cursorPos, cursorPos); } catch(e) {}
+            }
         }
 
         function handleCustomerSortChange(e) {
@@ -4412,11 +5084,12 @@
                     }).join('');
 
                 tableContent = `
+                    <div id="customer-table-container">
                     <div class="p-4 border-b border-gray-100 flex flex-col sm:flex-row gap-3 justify-between bg-gray-50/50">
                         <div class="flex gap-2 flex-1">
                             <div class="relative flex-1 max-w-sm">
-                                <input type="text" placeholder="Cari nama, no. HP, atau ID member..." value="${state.customerSearch}"
-                                    onkeyup="handleCustomerSearch(event)"
+                                <input type="text" id="customer-search-input" placeholder="Cari nama, no. HP, atau ID member..." value="${state.customerSearch}"
+                                    oninput="handleCustomerSearch(event)"
                                     class="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-md focus:ring-1 focus:ring-green-500 focus:outline-none text-sm" />
                                 <i class="ph ph-magnifying-glass absolute left-3 top-2.5 text-gray-400"></i>
                             </div>
@@ -4446,20 +5119,14 @@
                                     <th class="py-3 px-4 font-medium text-right">Aksi</th>
                                 </tr>
                             </thead>
-                            <tbody>${rows}</tbody>
+                            <tbody id="customer-tbody">${rows}</tbody>
                         </table>
                     </div>
+                    <div class="customer-pagination p-4 border-t border-gray-100 justify-between items-center bg-white" style="display:${totalPages > 1 ? 'flex' : 'none'};">
+                        ${totalPages > 1 ? `<button onclick="changeCustomerPage(-1)" ${state.customerPage===1?'disabled':''} class="px-4 py-1.5 border border-gray-200 text-gray-600 text-sm font-medium rounded hover:bg-gray-50 disabled:opacity-50 transition-colors">< Prev</button><span class="text-sm text-gray-500 font-medium">Hal ${state.customerPage} dari ${totalPages}</span><button onclick="changeCustomerPage(1)" ${state.customerPage===totalPages?'disabled':''} class="px-4 py-1.5 border border-gray-200 text-gray-600 text-sm font-medium rounded hover:bg-gray-50 disabled:opacity-50 transition-colors">Next ></button>` : ''}
+                    </div>
+                    </div>
                 `;
-
-                if (totalPages > 1) {
-                    tableContent += `
-                        <div class="p-4 border-t border-gray-100 flex justify-between items-center bg-white">
-                            <button onclick="changeCustomerPage(-1)" ${state.customerPage===1?'disabled':''} class="px-4 py-1.5 border border-gray-200 text-gray-600 text-sm font-medium rounded hover:bg-gray-50 disabled:opacity-50 transition-colors">< Prev</button>
-                            <span class="text-sm text-gray-500 font-medium">Hal ${state.customerPage} dari ${totalPages}</span>
-                            <button onclick="changeCustomerPage(1)" ${state.customerPage===totalPages?'disabled':''} class="px-4 py-1.5 border border-gray-200 text-gray-600 text-sm font-medium rounded hover:bg-gray-50 disabled:opacity-50 transition-colors">Next ></button>
-                        </div>
-                    `;
-                }
             }
 
             return `
@@ -4500,7 +5167,65 @@
         function handleOpnameSearch(e) {
             state.opnameSearch = e.target.value.toLowerCase();
             state.opnamePage = 1;
-            renderContent();
+            renderOpnameTableOnly();
+        }
+
+        // Render hanya tabel stock opname tanpa full re-render (agar input tidak kehilangan fokus)
+        function renderOpnameTableOnly() {
+            var container = document.getElementById('opname-table-container');
+            if (!container) { renderContent(); return; }
+            var inp = document.activeElement;
+            var cursorPos = (inp && inp.id === 'opname-search-input') ? inp.selectionStart : null;
+
+            var q = state.opnameSearch;
+            var displayData = stockOpnameData.filter(function(x) {
+                return !q || x.name.toLowerCase().includes(q) || x.id.toLowerCase().includes(q) || x.category.toLowerCase().includes(q);
+            });
+            if (state.opnameSort === 'az') displayData.sort(function(a,b){ return a.name.localeCompare(b.name); });
+            else if (state.opnameSort === 'za') displayData.sort(function(a,b){ return b.name.localeCompare(a.name); });
+            else if (state.opnameSort === 'cat') displayData.sort(function(a,b){ return a.category.localeCompare(b.category); });
+            else if (state.opnameSort === 'diff_minus') displayData.sort(function(a,b){ return a.diff - b.diff; });
+            else if (state.opnameSort === 'diff_plus') displayData.sort(function(a,b){ return b.diff - a.diff; });
+
+            var opnamePP = 25;
+            var totalPages = Math.max(1, Math.ceil(displayData.length / opnamePP));
+            if (state.opnamePage > totalPages) state.opnamePage = totalPages;
+            var pagedData = displayData.slice((state.opnamePage - 1) * opnamePP, state.opnamePage * opnamePP);
+
+            var tbody = container.querySelector('#opname-tbody');
+            if (tbody) {
+                tbody.innerHTML = pagedData.length === 0
+                    ? '<tr><td colspan="6" class="text-center py-6 text-gray-400 text-sm">Produk tidak ditemukan.</td></tr>'
+                    : pagedData.map(function(item) {
+                        return '<tr class="border-b border-gray-100 hover:bg-gray-50/50">'
+                            + '<td class="py-3 px-4 text-sm font-mono text-gray-500">' + item.id + '</td>'
+                            + '<td class="py-3 px-4 text-sm font-medium text-gray-800">' + item.name + '</td>'
+                            + '<td class="py-3 px-4 text-sm text-center"><span class="px-2 py-1 bg-gray-100 rounded text-xs">' + item.category + '</span></td>'
+                            + '<td class="py-3 px-4 text-sm font-bold text-center text-gray-700">' + item.systemStock + '</td>'
+                            + '<td class="py-3 px-4 text-center"><input type="number" min="0" value="' + item.actualStock + '" onchange="handleOpnameInput(\'' + item.id + '\', this.value)" onkeyup="handleOpnameInput(\'' + item.id + '\', this.value)" class="w-20 px-2 py-1.5 border border-gray-300 rounded-md text-sm text-center focus:ring-1 focus:ring-green-500 focus:outline-none" /></td>'
+                            + '<td id="diff-' + item.id + '" class="text-sm font-bold text-center ' + (item.diff < 0 ? 'text-red-500' : item.diff > 0 ? 'text-blue-500' : 'text-gray-400') + '">'
+                            + (item.diff > 0 ? '+' + item.diff : item.diff) + '</td></tr>';
+                    }).join('');
+            }
+
+            var pagination = container.querySelector('.opname-pagination');
+            if (pagination) {
+                if (totalPages > 1) {
+                    pagination.innerHTML = '<div class="p-4 border-t border-gray-100 flex justify-between items-center">'
+                        + '<button onclick="state.opnamePage--; renderOpnameTableOnly()" ' + (state.opnamePage===1?'disabled':'') + ' class="px-4 py-1.5 border border-gray-200 text-gray-600 text-sm font-medium rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors">&lsaquo; Prev</button>'
+                        + '<span class="text-sm text-gray-500">Hal ' + state.opnamePage + ' dari ' + totalPages + ' &bull; ' + displayData.length + ' produk</span>'
+                        + '<button onclick="state.opnamePage++; renderOpnameTableOnly()" ' + (state.opnamePage===totalPages?'disabled':'') + ' class="px-4 py-1.5 border border-gray-200 text-gray-600 text-sm font-medium rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors">Next &rsaquo;</button>'
+                        + '</div>';
+                } else {
+                    pagination.innerHTML = '<div class="p-3 text-center text-xs text-gray-400">' + displayData.length + ' produk</div>';
+                }
+            }
+
+            var searchInput = document.getElementById('opname-search-input');
+            if (searchInput && cursorPos !== null) {
+                searchInput.focus();
+                try { searchInput.setSelectionRange(cursorPos, cursorPos); } catch(e) {}
+            }
         }
 
         function handleOpnameSortChange(e) {
@@ -4602,7 +5327,7 @@
             var nama     = (document.getElementById('kar-nama').value     ||'').trim();
             var username = (document.getElementById('kar-username').value ||'').trim();
             var password = (document.getElementById('kar-password').value ||'').trim();
-            var nohp     = (document.getElementById('kar-nohp').value     ||'').trim();
+            var nohp     = normalizePhoneNumber((document.getElementById('kar-nohp').value ||'').trim());
             var email    = (document.getElementById('kar-email').value    ||'').trim();
             var alamat   = (document.getElementById('kar-alamat').value   ||'').trim();
             if (!nama)     { showAlert('Wajib','Nama lengkap karyawan wajib diisi.','warning'); return; }
