@@ -453,7 +453,9 @@
 
             // State laporan
             laporanPage: 1,
-            laporanFilter: 'semua',  // semua | hari | minggu | bulan
+            laporanFilter: 'semua',  // semua | hari | minggu | bulan | bulan2 | bulan3 | custom
+            laporanCustomFrom: '',
+            laporanCustomTo: '',
             laporanSearch: ''
         };
 
@@ -476,11 +478,15 @@
         // --- FETCH DATA — fetch() dengan fallback JSONP ---
         function fetchData() {
             if (!GAS_URL) return;
-            state.isLoading = true;
             state.fetchError = null;
             var icon = document.getElementById('refresh-icon');
             if (icon) icon.classList.add('animate-spin');
-            renderContent();
+            // Hanya tampilkan loading spinner jika belum ada data sama sekali
+            var firstLoad = state.products.length === 0 && !state.isLoading;
+            if (firstLoad) {
+                state.isLoading = true;
+                renderContent();
+            }
 
             var fetchUrl = GAS_URL + '?t=' + Date.now();
             fetch(fetchUrl, {
@@ -533,8 +539,8 @@
                 state.fetchError = 'Timeout: GAS tidak merespons 15 detik. Pastikan sudah di-deploy ulang dengan Who has access: Anyone.';
                 var ic = document.getElementById('refresh-icon');
                 if (ic) ic.classList.remove('animate-spin');
-                showToast('Gagal memuat — timeout.', 'error');
-                renderContent();
+                showToast('Gagal memuat data dari GAS (timeout). Klik Refresh untuk coba lagi.', 'error');
+                if (state.products.length === 0) renderContent();
             }, 15000);
 
             window[cbName] = function(data) {
@@ -555,8 +561,8 @@
                 state.fetchError = 'URL GAS tidak valid atau GAS belum di-deploy. Pastikan URL berakhiran /exec dan Who has access: Anyone.';
                 var ic = document.getElementById('refresh-icon');
                 if (ic) ic.classList.remove('animate-spin');
-                showToast('Gagal — cek URL GAS.', 'error');
-                renderContent();
+                showToast('Gagal terhubung ke GAS. Cek URL dan coba Refresh.', 'error');
+                if (state.products.length === 0) renderContent();
             };
             document.head.appendChild(script);
         }
@@ -570,7 +576,7 @@
                             modal: p.Modal||0, price: p.Harga_Jual||0,
                             wholesalePrice: p.Harga_Grosir||0, wholesaleMin: p.Min_Grosir||0,
                             discount: p.Diskon||0, stock: p.Stok||0,
-                            minStock: p.Stok_Minimal||10, poinPerUnit: p.Poin_Per_Unit||0, image: '📦'
+                            minStock: p.Stok_Minimal||10, poinPerUnit: p.Poin_Per_Unit||0, unlimited: String(p.Unlimited||'').toLowerCase()==='true', image: '📦'
                         }; });
                     }
                     if (data.customers) {
@@ -627,8 +633,11 @@
                         if (pen.footer_struk !== undefined && pen.footer_struk) footerStruk = pen.footer_struk;
                         if (pen.cancel_pwd  !== undefined && pen.cancel_pwd)  cancelRefundPwd = pen.cancel_pwd;
                     }
+                    var wasFirstLoad = state.isLoading;
                     state.isLoading = false;
                     showToast('Data dimuat: ' + state.products.length + ' produk, ' + state.customers.length + ' pelanggan.', 'success');
+                    // Render ulang hanya jika ini firstLoad atau sedang di halaman yang menunggu data
+                    if (wasFirstLoad) renderContent();
                     // Auto-cleanup silent: transaksi > 30 hari
                     (function() {
                         var batas = new Date();
@@ -665,6 +674,7 @@
                     state.isLoading = false;
                     state.fetchError = (data && data.message) || 'Status error dari server';
                     showToast('Error dari GAS: ' + state.fetchError, 'error');
+                    if (state.products.length === 0) renderContent();
                 }
                 renderContent();
         }
@@ -815,7 +825,7 @@
             doc.setFontSize(10);
             doc.text(`Tanggal: ${new Date().toLocaleDateString('id-ID')}`, 14, 28);
             
-            const lowStockProducts = state.products.filter(p => p.stock <= p.minStock);
+            const lowStockProducts = state.products.filter(p => !p.unlimited && p.stock <= p.minStock);
             const tableData = lowStockProducts.map((p, index) => [
                 index + 1,
                 p.id,
@@ -1131,7 +1141,7 @@
             const trxHariIni    = todaySales.length;
             const totalMember   = state.customers.length;
 
-            const lowStockProducts = state.products.filter(p => p.stock <= p.minStock);
+            const lowStockProducts = state.products.filter(p => !p.unlimited && p.stock <= p.minStock);
             const alertCount = lowStockProducts.length;
 
             // Grafik 7 hari terakhir
@@ -1473,13 +1483,13 @@
 
             const existingItem = state.cart.find(item => item.id === productId);
             if (existingItem) {
-                if (existingItem.qty < product.stock) {
+                if (product.unlimited || existingItem.qty < product.stock) {
                     existingItem.qty += 1;
                 } else {
                     showAlert('Stok Tidak Cukup', 'Jumlah melebihi stok yang tersedia!', 'warning');
                 }
             } else {
-                if (product.stock > 0) {
+                if (product.unlimited || product.stock > 0) {
                     state.cart.push({ ...product, qty: 1 });
                 } else {
                     showAlert('Stok Habis', 'Produk ini sedang tidak tersedia.', 'error');
@@ -1498,7 +1508,7 @@
                 const product = state.products.find(p => p.id === productId);
                 const newQty = state.cart[index].qty + change;
                 
-                if (newQty > product.stock) {
+                if (!product.unlimited && newQty > product.stock) {
                     showAlert('Stok Tidak Cukup', 'Jumlah melebihi stok yang tersedia!', 'warning');
                     return;
                 }
@@ -1861,7 +1871,7 @@
                         <div style="font-size:${isMobile?'12px':'11px'};font-weight:600;color:#1f2937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:${isMobile?'150px':'130px'};">${p.name}</div>
                         <div style="font-size:${isMobile?'12px':'11px'};font-weight:700;color:#16a34a;">${formatRp(p.price)}</div>
                     </div>
-                    <span style="flex-shrink:0;font-size:10px;padding:2px 6px;border-radius:3px;font-weight:600;margin-left:4px;background:${low?'#fee2e2':'#dcfce7'};color:${low?'#dc2626':'#16a34a'};">${p.stock}</span>
+                    <span style="flex-shrink:0;font-size:10px;padding:2px 6px;border-radius:3px;font-weight:600;margin-left:4px;background:${p.unlimited?'#ede9fe':low?'#fee2e2':'#dcfce7'};color:${p.unlimited?'#7c3aed':low?'#dc2626':'#16a34a'};">${p.unlimited?'∞':p.stock}</span>
                 </button>`;
             }
             const col1 = pageItems.slice(0,5).map(itemBtn).join('');
@@ -2096,7 +2106,7 @@
             const isEdit = id !== null;
             const p = isEdit 
                 ? state.products.find(x => x.id === id) 
-                : { id: `ZT-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`, barcode: '', name: '', category: '', modal: 0, price: 0, wholesalePrice: 0, wholesaleMin: 0, discount: 0, stock: 0, minStock: 10, poinPerUnit: 0 };
+                : { id: `ZT-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`, barcode: '', name: '', category: '', modal: 0, price: 0, wholesalePrice: 0, wholesaleMin: 0, discount: 0, stock: 0, minStock: 10, poinPerUnit: 0, unlimited: false };
             
             modal.innerHTML = `
                 <div class="bg-white rounded-xl shadow-lg w-full max-w-md p-6 relative">
@@ -2158,13 +2168,24 @@
                                     <input type="number" id="p-discount" value="${p.discount}" min="0" placeholder="Cth: 2000" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-1 focus:ring-green-500" />
                                 </div>
                                 <div>
-                                    <label class="block text-sm font-medium text-gray-700 mb-1">Stok Real</label>
-                                    <input type="number" id="p-stock" value="${p.stock}" min="0" required class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-1 focus:ring-green-500" />
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Tipe Stok</label>
+                                    <label style="display:flex;align-items:center;gap:8px;padding:9px 12px;border:1px solid #d1d5db;border-radius:6px;cursor:pointer;background:#fff;">
+                                        <input type="checkbox" id="p-unlimited" ${p.unlimited?'checked':''} onchange="toggleUnlimitedFields(this.checked)" style="width:16px;height:16px;accent-color:#16a34a;cursor:pointer;" />
+                                        <span class="text-sm font-medium text-gray-700">Unlimited <span class="text-gray-400 text-xs">(tanpa stok)</span></span>
+                                    </label>
                                 </div>
                             </div>
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">Stok Minimal <span class="text-gray-400 text-xs">(Batas peringatan)</span></label>
-                                <input type="number" id="p-minStock" value="${p.minStock}" min="0" required class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-1 focus:ring-green-500" />
+                            <div id="p-stock-fields" style="display:${p.unlimited?'none':'block'}">
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 mb-1">Stok Real</label>
+                                        <input type="number" id="p-stock" value="${p.stock}" min="0" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-1 focus:ring-green-500" />
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 mb-1">Stok Minimal <span class="text-gray-400 text-xs">(Peringatan)</span></label>
+                                        <input type="number" id="p-minStock" value="${p.minStock}" min="0" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-1 focus:ring-green-500" />
+                                    </div>
+                                </div>
                             </div>
                             <div class="border-t border-gray-100 pt-3 mt-1">
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Poin per Unit <span class="text-gray-400 text-xs">(0 = tidak dapat poin)</span></label>
@@ -2184,6 +2205,11 @@
             modal.classList.remove('hidden');
         }
 
+        function toggleUnlimitedFields(isUnlimited) {
+            var fields = document.getElementById('p-stock-fields');
+            if (fields) fields.style.display = isUnlimited ? 'none' : 'block';
+        }
+
         function closeProductModal() {
             document.getElementById('product-modal').classList.add('hidden');
         }
@@ -2200,8 +2226,9 @@
                 wholesalePrice: Number(document.getElementById('p-wholesalePrice').value),
                 wholesaleMin: Number(document.getElementById('p-wholesaleMin').value),
                 discount: Number(document.getElementById('p-discount').value),
-                stock: Number(document.getElementById('p-stock').value),
-                minStock: Number(document.getElementById('p-minStock').value) || 10,
+                unlimited: document.getElementById('p-unlimited') ? document.getElementById('p-unlimited').checked : false,
+                stock: (document.getElementById('p-unlimited') && document.getElementById('p-unlimited').checked) ? 999999 : Number(document.getElementById('p-stock') ? document.getElementById('p-stock').value : 0),
+                minStock: (document.getElementById('p-unlimited') && document.getElementById('p-unlimited').checked) ? 0 : (Number(document.getElementById('p-minStock') ? document.getElementById('p-minStock').value : 0) || 10),
                 poinPerUnit: Number(document.getElementById('p-poinPerUnit').value) || 0
             };
 
@@ -2263,7 +2290,7 @@
 
             msgEl.innerHTML =
                 '<p style="font-size:13px;font-weight:600;color:#1f2937;margin-bottom:2px;">' + prod.name + '</p>'
-                + '<p style="font-size:12px;color:#6b7280;margin-bottom:16px;">Stok saat ini: <strong style="color:' + (prod.stock <= prod.minStock ? '#dc2626' : '#16a34a') + ';">' + prod.stock + ' unit</strong></p>'
+                + (prod.unlimited ? '<p style="font-size:12px;color:#7c3aed;margin-bottom:16px;font-weight:600;">&#8734; Produk ini Unlimited — tidak perlu ubah stok.</p>' : '<p style="font-size:12px;color:#6b7280;margin-bottom:16px;">Stok saat ini: <strong style="color:' + (prod.stock <= prod.minStock ? '#dc2626' : '#16a34a') + ';">' + prod.stock + ' unit</strong></p>')
                 + '<div style="display:flex;align-items:center;gap:10px;justify-content:center;">'
                 + '<button onclick="qsStep(-1)" style="width:44px;height:44px;background:#fee2e2;color:#dc2626;border:none;border-radius:10px;font-size:24px;font-weight:900;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;">−</button>'
                 + '<input type="number" id="quick-stock-input" value="' + prod.stock + '" min="0" '
@@ -2419,12 +2446,14 @@
                                             ${product.discount > 0 ? `<div class="text-xs text-red-500 font-bold mt-1">Promo: -${formatRp(product.discount)}</div>` : ''}
                                         </td>
                                         <td class="py-3 px-5 text-center">
-                                            <span class="text-sm font-bold ${product.stock <= product.minStock ? 'text-red-500' : 'text-green-500'}">
-                                                ${product.stock}
-                                            </span>
+                                            ${product.unlimited
+                                                ? '<span class="text-sm font-bold text-purple-600">&#8734;</span>'
+                                                : `<span class="text-sm font-bold ${product.stock <= product.minStock ? 'text-red-500' : 'text-green-500'}">${product.stock}</span>`}
                                         </td>
                                         <td class="py-3 px-5 text-center">
-                                            <span class="text-sm font-medium text-gray-500">${product.minStock}</span>
+                                            ${product.unlimited
+                                                ? '<span class="text-xs px-2 py-0.5 bg-purple-100 text-purple-600 rounded-full font-semibold">Unlimited</span>'
+                                                : `<span class="text-sm font-medium text-gray-500">${product.minStock}</span>`}
                                         </td>
                                         <td class="py-3 px-5 text-center">
                                             ${(product.poinPerUnit || 0) > 0
@@ -3440,25 +3469,57 @@
             return html;
         }
 
+        function getFilteredSales(filterOverride) {
+            var filter = filterOverride || state.laporanFilter;
+            var now = new Date();
+            var result = [...state.salesHistory];
+            if (filter === 'hari') {
+                var t = now.toDateString();
+                result = result.filter(function(s){ return new Date(s.date).toDateString() === t; });
+            } else if (filter === 'minggu') {
+                var wa = new Date(now); wa.setDate(now.getDate() - 7);
+                result = result.filter(function(s){ return new Date(s.date) >= wa; });
+            } else if (filter === 'bulan') {
+                result = result.filter(function(s){
+                    var d = new Date(s.date);
+                    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+                });
+            } else if (filter === 'bulan2') {
+                var b2 = new Date(now); b2.setDate(b2.getDate() - 60);
+                result = result.filter(function(s){ return new Date(s.date) >= b2; });
+            } else if (filter === 'bulan3') {
+                var b3 = new Date(now); b3.setDate(b3.getDate() - 90);
+                result = result.filter(function(s){ return new Date(s.date) >= b3; });
+            } else if (filter === 'custom') {
+                var from = state.laporanCustomFrom ? new Date(state.laporanCustomFrom) : null;
+                var to   = state.laporanCustomTo   ? new Date(state.laporanCustomTo)   : null;
+                if (to) { to.setHours(23,59,59,999); }
+                if (from) result = result.filter(function(s){ return new Date(s.date) >= from; });
+                if (to)   result = result.filter(function(s){ return new Date(s.date) <= to; });
+            }
+            return result;
+        }
+
+        function getPeriodLabel(filter) {
+            var labels = {
+                semua: 'Semua Waktu', hari: 'Hari Ini', minggu: '7 Hari Terakhir',
+                bulan: 'Bulan Ini', bulan2: '2 Bulan Terakhir', bulan3: '3 Bulan Terakhir'
+            };
+            if (filter === 'custom') {
+                var f = state.laporanCustomFrom || '?';
+                var t = state.laporanCustomTo   || '?';
+                return f + ' s/d ' + t;
+            }
+            return labels[filter] || 'Semua Waktu';
+        }
+
         function getLaporanHTML() {
             const now = new Date();
             const filter = state.laporanFilter;
             const q = (state.laporanSearch || '').toLowerCase().trim();
 
             // Filter by period
-            let filtered = [...state.salesHistory];
-            if (filter === 'hari') {
-                const today = now.toDateString();
-                filtered = filtered.filter(s => new Date(s.date).toDateString() === today);
-            } else if (filter === 'minggu') {
-                const weekAgo = new Date(now); weekAgo.setDate(now.getDate() - 7);
-                filtered = filtered.filter(s => new Date(s.date) >= weekAgo);
-            } else if (filter === 'bulan') {
-                filtered = filtered.filter(s => {
-                    const d = new Date(s.date);
-                    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-                });
-            }
+            let filtered = getFilteredSales(filter);
 
             // Filter by search query
             if (q) {
@@ -3525,12 +3586,38 @@
                     <button onclick="state.laporanPage++; renderContent()" ${state.laporanPage===totalPages?'disabled':''} class="px-4 py-1.5 border border-gray-200 text-gray-600 text-sm rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors">Next &rsaquo;</button>
                 </div>` : (filtered.length > 0 ? `<div class="p-3 text-center text-xs text-gray-400">${filtered.length} transaksi</div>` : '');
 
-            const filterBtns = ['semua','hari','minggu','bulan'].map(f =>
-                `<button onclick="state.laporanFilter='${f}'; state.laporanPage=1; renderContent()"
-                    class="px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${state.laporanFilter===f ? 'bg-green-600 text-white border-green-600' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}">
-                    ${{semua:'Semua',hari:'Hari Ini',minggu:'7 Hari',bulan:'Bulan Ini'}[f]}
+            const filterDefs = [
+                {k:'semua', label:'Semua'},
+                {k:'hari',  label:'Hari Ini'},
+                {k:'minggu',label:'7 Hari'},
+                {k:'bulan', label:'Bulan Ini'},
+                {k:'bulan2',label:'2 Bulan'},
+                {k:'bulan3',label:'3 Bulan'},
+            ];
+            const filterBtns = filterDefs.map(f =>
+                `<button onclick="state.laporanFilter='${f.k}'; state.laporanPage=1; renderContent()"
+                    class="px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${state.laporanFilter===f.k ? 'bg-green-600 text-white border-green-600' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}">
+                    ${f.label}
                 </button>`
             ).join('');
+            // Custom date range
+            const today = new Date();
+            const maxDate = today.toISOString().split('T')[0];
+            const minDate = new Date(today.getFullYear(), today.getMonth()-2, today.getDate()).toISOString().split('T')[0];
+            const customActive = state.laporanFilter === 'custom';
+            const customRow = `<div class="flex items-center gap-2 flex-wrap mt-1">
+                <button onclick="state.laporanFilter='custom'; state.laporanPage=1; renderContent()"
+                    class="px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${customActive ? 'bg-green-600 text-white border-green-600' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}">
+                    <i class="ph ph-calendar"></i> Pilih Tanggal
+                </button>
+                ${customActive ? `<input type="date" value="${state.laporanCustomFrom}" max="${maxDate}"
+                    onchange="state.laporanCustomFrom=this.value; state.laporanPage=1; renderContent()"
+                    class="px-2 py-1 text-xs border border-gray-200 rounded-lg focus:ring-1 focus:ring-green-400 focus:outline-none" />
+                <span class="text-xs text-gray-400">s/d</span>
+                <input type="date" value="${state.laporanCustomTo}" max="${maxDate}"
+                    onchange="state.laporanCustomTo=this.value; state.laporanPage=1; renderContent()"
+                    class="px-2 py-1 text-xs border border-gray-200 rounded-lg focus:ring-1 focus:ring-green-400 focus:outline-none" />` : ''}
+            </div>`;
 
             return `
                 <div class="space-y-4">
@@ -3561,14 +3648,17 @@
                                 <h2 class="font-semibold text-gray-800">Riwayat Transaksi</h2>
                                 <p class="text-xs text-gray-500">${currentUser && currentUser.role === 'karyawan' ? '⚠️ Pembatalan transaksi memerlukan verifikasi password admin.' : 'Admin dapat membatalkan transaksi langsung.'}</p>
                             </div>
-                            <div class="flex gap-2 flex-wrap">
-                                ${filterBtns}
-                                <button onclick="downloadLaporanPDF()" class="px-3 py-1.5 text-xs font-semibold rounded-lg border border-green-200 text-green-700 bg-green-50 hover:bg-green-100 flex items-center gap-1">
-                                    <i class="ph ph-download-simple"></i> PDF
-                                </button>
-                                <button onclick="downloadLaporanCSV()" class="px-3 py-1.5 text-xs font-semibold rounded-lg border border-blue-200 text-blue-700 bg-blue-50 hover:bg-blue-100 flex items-center gap-1">
-                                    <i class="ph ph-file-csv"></i> CSV
-                                </button>
+                            <div class="flex flex-col gap-1.5">
+                                <div class="flex gap-2 flex-wrap">
+                                    ${filterBtns}
+                                    <button onclick="downloadLaporanPDF()" class="px-3 py-1.5 text-xs font-semibold rounded-lg border border-green-200 text-green-700 bg-green-50 hover:bg-green-100 flex items-center gap-1">
+                                        <i class="ph ph-download-simple"></i> PDF
+                                    </button>
+                                    <button onclick="downloadLaporanCSV()" class="px-3 py-1.5 text-xs font-semibold rounded-lg border border-blue-200 text-blue-700 bg-blue-50 hover:bg-blue-100 flex items-center gap-1">
+                                        <i class="ph ph-file-csv"></i> CSV
+                                    </button>
+                                </div>
+                                ${customRow}
                             </div>
                         </div>
 
@@ -3734,8 +3824,10 @@
             selectedItems.forEach(function(it) {
                 var prod = state.products.find(function(p){ return p.name === it.name; });
                 if (prod) {
-                    prod.stock += it.qty;
-                    stockUpdates.push({ id: prod.id, stock: prod.stock });
+                    if (!prod.unlimited) {
+                        prod.stock += it.qty;
+                        stockUpdates.push({ id: prod.id, stock: prod.stock });
+                    }
                 }
             });
 
@@ -4018,16 +4110,10 @@
                 function downloadLaporanPDF() {
             const { jsPDF } = window.jspdf;
             const doc = new jsPDF({ orientation: 'landscape' });
-            const filter = state.laporanFilter;
             const now = new Date();
-
-            let filtered = [...state.salesHistory];
-            if (filter === 'hari') { const t = now.toDateString(); filtered = filtered.filter(s => new Date(s.date).toDateString() === t); }
-            else if (filter === 'minggu') { const wa = new Date(now); wa.setDate(now.getDate()-7); filtered = filtered.filter(s => new Date(s.date) >= wa); }
-            else if (filter === 'bulan') { filtered = filtered.filter(s => { const d = new Date(s.date); return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear(); }); }
-
+            const filtered = getFilteredSales();
             const totalOmzet = filtered.reduce((s,x) => s+x.total, 0);
-            const periodLabel = { semua:'Semua Waktu', hari:'Hari Ini', minggu:'7 Hari Terakhir', bulan:'Bulan Ini' }[filter];
+            const periodLabel = getPeriodLabel(state.laporanFilter);
 
             doc.setFontSize(16); doc.text(`${namaTokoStruk} - Laporan Penjualan`, 14, 15);
             doc.setFontSize(10); doc.text(`Periode: ${periodLabel} | Dicetak: ${now.toLocaleDateString('id-ID')} ${now.toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit'})}`, 14, 22);
@@ -4057,12 +4143,8 @@
         }
 
         function downloadLaporanCSV() {
-            const filter = state.laporanFilter;
             const now = new Date();
-            let filtered = [...state.salesHistory];
-            if (filter === 'hari') { const t = now.toDateString(); filtered = filtered.filter(s => new Date(s.date).toDateString() === t); }
-            else if (filter === 'minggu') { const wa = new Date(now); wa.setDate(now.getDate()-7); filtered = filtered.filter(s => new Date(s.date) >= wa); }
-            else if (filter === 'bulan') { filtered = filtered.filter(s => { const d = new Date(s.date); return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear(); }); }
+            const filtered = getFilteredSales();
 
             const headers = ['No Transaksi','Tanggal','Waktu','Item','Member','Metode','Total'];
             const csvRows = [headers.join(',')];
@@ -4082,7 +4164,7 @@
             const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
             const a = document.createElement('a');
             a.href = URL.createObjectURL(blob);
-            a.download = `Laporan_${now.toLocaleDateString('id-ID').replace(/\//g,'-')}.csv`;
+            a.download = `Laporan_${getPeriodLabel(state.laporanFilter).replace(/ /g,'_')}_${now.toLocaleDateString('id-ID').replace(/\//g,'-')}.csv`;
             a.click();
         }
 
@@ -5285,75 +5367,203 @@
 
         function getFaqHTML() {
             var faqs = [
+
+                // ═══════════════════════════════════════════════
+                //  PANDUAN MEMULAI
+                // ═══════════════════════════════════════════════
+
+                {
+                    icon: 'ph-monitor', color: '#0284c7',
+                    title: '🖥️ Cara Pakai di Desktop (PC / Laptop)',
+                    desc: 'Tampilan desktop Z-TRONIK dirancang untuk layar lebar (1024px ke atas) dengan skala 85%. Layout terdiri dari: (A) Sidebar kiri — menu navigasi, klik ikon ☰ di header untuk menyembunyikan/membuka sidebar. (B) Header atas — nama menu aktif, tombol Refresh data, dan info user yang login. (C) Area konten utama — tampilan halaman yang aktif. Di menu Penjualan (POS) desktop: panel kiri atas menampilkan keranjang belanja (tabel produk yang dipilih), di bawahnya ada daftar produk 2 kolom (5 kiri + 5 kanan per halaman), dan panel kanan menampilkan ringkasan belanja, pilihan metode bayar, dan tombol checkout. Navigasi antar menu cukup klik nama menu di sidebar.'
+                },
+                {
+                    icon: 'ph-device-mobile', color: '#7c3aed',
+                    title: '📱 Cara Pakai di Mobile (HP / Tablet)',
+                    desc: 'Tampilan mobile Z-TRONIK otomatis menyesuaikan layar kecil. Perbedaan utama dari desktop: (A) Sidebar tersembunyi secara default — ketuk ikon ☰ di pojok kiri atas untuk membuka, ketuk area gelap di luar untuk menutup. (B) Font sedikit lebih kecil (13px) dan padding lebih rapat untuk efisiensi ruang. (C) Di menu Penjualan (POS mobile): ada dua tab di bagian atas — tab "Produk" untuk memilih produk, tab "Keranjang" untuk melihat keranjang dan checkout. Beralih antar tab dengan mengetuk tombolnya. Saat produk pertama ditambahkan, otomatis berpindah ke tab Keranjang. (D) Di tab Keranjang mobile, ada tombol "Tambah Produk Lagi" untuk kembali ke tab Produk. Semua fitur desktop tersedia di mobile kecuali beberapa kolom tabel yang disembunyikan untuk menghemat ruang.'
+                },
+                {
+                    icon: 'ph-sign-in', color: '#059669',
+                    title: '🔑 Login & Logout',
+                    desc: 'Login: Buka aplikasi di browser → masukkan username dan password → klik Masuk atau tekan Enter. Tersedia animasi loading 2 detik setelah login berhasil. Terdapat dua jenis akun: (1) Admin — akses penuh ke semua menu termasuk Produk, Pengaturan, Karyawan, Stock Opname. (2) Karyawan — akses terbatas ke Dashboard, Penjualan, Pelanggan, Poin & Reward, Laporan, Clerek, dan FAQ. Logout: klik tombol "Keluar" di bagian bawah sidebar → konfirmasi → animasi loading 2 detik → kembali ke halaman login. Sesi login tersimpan di sessionStorage browser, artinya jika tab ditutup dan dibuka kembali dalam sesi yang sama, tidak perlu login ulang.'
+                },
+
+                // ═══════════════════════════════════════════════
+                //  MENU UTAMA
+                // ═══════════════════════════════════════════════
                 {
                     icon: 'ph-squares-four', color: '#16a34a',
-                    title: 'Dashboard',
-                    desc: 'Halaman utama yang menampilkan ringkasan bisnis secara real-time: omzet hari ini, jumlah transaksi, total member, stok menipis, dan 5 produk terlaris. Klik kartu ringkasan untuk langsung berpindah ke menu terkait.'
+                    title: '📊 Dashboard',
+                    desc: 'Halaman utama berisi ringkasan bisnis real-time: (1) Omzet Hari Ini — total penjualan transaksi hari ini. (2) Transaksi Hari Ini — jumlah transaksi yang sudah diproses. (3) Total Member — jumlah pelanggan terdaftar. (4) Peringatan Stok — produk yang stoknya di bawah batas minimal (badge merah). (5) Grafik Penjualan 7 Hari — bar chart otomatis dari data transaksi, bar hari ini berwarna hijau tua. (6) Top 5 Produk Terjual — produk dengan qty terjual terbanyak sepanjang masa. (7) Daftar Stok Menipis — produk dengan stok di bawah minimal beserta tombol unduh PDF. Klik "Laporan Lengkap" di grafik untuk langsung ke menu Laporan.'
                 },
                 {
                     icon: 'ph-shopping-cart', color: '#0284c7',
-                    title: 'Penjualan (Kasir / POS)',
-                    desc: 'Menu kasir untuk melakukan transaksi penjualan. Cara pakai: (1) Buka shift di menu Kas Awal & Clerek terlebih dahulu. (2) Cari produk via kolom pencarian, filter kategori, atau scan barcode. (3) Klik produk untuk menambah ke keranjang. (4) Atur qty, diskon, dan member. (5) Pilih metode bayar: Tunai, QRIS, atau Kartu. (6) Klik "Proses Pembayaran" dan struk akan otomatis tercetak. Di mobile, gunakan tab "Produk" dan "Keranjang" untuk berpindah tampilan.'
+                    title: '🛒 Penjualan / Kasir (POS) — Desktop',
+                    desc: 'Alur transaksi di desktop: (1) Pastikan shift sudah dibuka di menu Clerek. (2) Di panel kiri bawah: cari produk via kolom pencarian atau filter kategori — tampil 5 produk kiri + 5 kanan per halaman. (3) Klik nama produk untuk langsung menambah ke keranjang di tabel atas. (4) Di tabel keranjang (atas panel kiri): tampil 4 baris, bisa scroll jika lebih. Gunakan tombol +/− untuk ubah qty, klik × untuk hapus. (5) Di panel kanan: pilih member (opsional, ketik ID/No.HP lalu Enter), atur diskon tambahan (Rp atau %), lihat ringkasan total, pilih metode bayar (Tunai/QRIS/Kartu). (6) Klik "PROSES PEMBAYARAN" → masukkan nominal bayar (jika tunai) → konfirmasi → struk otomatis tercetak. Tombol Refresh di header untuk memuat ulang data terbaru.'
+                },
+                {
+                    icon: 'ph-shopping-bag', color: '#0369a1',
+                    title: '🛒 Penjualan / Kasir (POS) — Mobile',
+                    desc: 'Alur transaksi di mobile: (1) Buka shift di menu Clerek terlebih dahulu. (2) Tab "Produk" aktif secara default — tampil daftar produk dalam 2 kolom. Ketuk produk untuk tambah ke keranjang, aplikasi otomatis pindah ke tab Keranjang setelah produk pertama ditambahkan. (3) Tab "Keranjang" — tampil daftar produk yang dipilih, ringkasan total, pilih member, atur diskon, pilih metode bayar. (4) Ketuk "Tambah Produk Lagi" untuk balik ke tab Produk. (5) Ketuk "PROSES PEMBAYARAN" untuk menyelesaikan transaksi. (6) Scan barcode: ketuk tombol "Scan" di toolbar produk, izinkan akses kamera, arahkan ke barcode — produk otomatis masuk keranjang. Total belanja selalu tampil di header atas untuk referensi cepat.'
                 },
                 {
                     icon: 'ph-package', color: '#7c3aed',
-                    title: 'Produk Saya',
-                    desc: 'Kelola semua produk/layanan toko. Fitur: tambah produk baru, edit harga/stok/diskon, hapus produk, atur harga grosir (harga khusus untuk pembelian qty tertentu), atur poin per unit untuk program reward, dan lihat stok saat ini. Data produk tersimpan di Google Spreadsheet dan otomatis tersinkronisasi.'
+                    title: '📦 Produk Saya',
+                    desc: 'Manajemen katalog produk dan layanan toko. Cara tambah produk baru: klik tombol "+ Tambah Produk" → isi form: ID/SKU (otomatis), Barcode (opsional, bisa scan kamera), Nama Produk, Kategori, Harga Modal, Harga Jual, Harga Grosir + Min Beli Grosir (opsional, untuk harga khusus qty besar), Nominal Promo (potongan harga otomatis), Tipe Stok (centang "Unlimited" jika produk tidak perlu manajemen stok — cocok untuk layanan/jasa), Stok Real + Stok Minimal (batas peringatan), Poin per Unit (poin bonus per produk untuk member) → klik Simpan. Edit produk: klik ikon pensil. Hapus: klik ikon tempat sampah. Ubah stok cepat: klik ikon stack (+/-) tanpa perlu buka form edit. Produk Unlimited ditampilkan dengan badge ∞ ungu — tidak muncul di peringatan stok.'
                 },
                 {
                     icon: 'ph-users', color: '#0891b2',
-                    title: 'Pelanggan',
-                    desc: 'Kelola data member/pelanggan. Fitur: tambah pelanggan baru, edit data, hapus, lihat total belanja, poin aktif, dan poin akumulasi. ID member dibuat otomatis dengan format ZTR0000001. Pelanggan bisa dicari berdasarkan nama atau nomor HP saat transaksi di kasir.'
+                    title: '👥 Pelanggan / Member',
+                    desc: 'Kelola database pelanggan untuk program loyalitas. Cara tambah member baru: klik "+ Tambah Pelanggan" → isi Nama, No. HP, Email (opsional), Alamat (opsional) → simpan. ID member (format ZTR0000001) dibuat otomatis. Saat transaksi di kasir: ketik ID member atau No. HP di kolom pencarian member → Enter → data member muncul lengkap dengan poin aktif. Member mendapat poin setiap transaksi sesuai aturan di menu Poin & Reward. Poin bisa ditukar sebagai potongan harga saat checkout. Tier member (Bronze/Silver/Gold/Platinum) naik otomatis sesuai akumulasi poin. Di mobile: tampilan member card muncul di tab Keranjang setelah member berhasil dipilih.'
                 },
                 {
                     icon: 'ph-clipboard-text', color: '#b45309',
-                    title: 'Stock Opname',
-                    desc: 'Menu untuk menyesuaikan stok produk secara manual. Masukkan jumlah stok aktual di lapangan, lalu simpan. Sistem akan memperbarui stok di spreadsheet. Berguna setelah penghitungan stok fisik. Dilengkapi fitur pencarian dan filter untuk menemukan produk dengan cepat.'
+                    title: '📋 Stock Opname',
+                    desc: 'Penghitungan dan penyesuaian stok fisik. Cara pakai: (1) Klik "Mulai Stock Opname" → sistem mencatat stok awal saat ini sebagai titik referensi. (2) Hitung stok fisik di lapangan untuk setiap produk. (3) Masukkan jumlah aktual di kolom "Stok Aktual" — selisih dengan stok sistem otomatis dihitung dan ditampilkan (+/−). (4) Gunakan kolom pencarian untuk menemukan produk tertentu. (5) Klik "Selesaikan & Simpan" → semua stok diperbarui sesuai stok aktual. (6) Tersedia tombol unduh PDF laporan selisih. Produk unlimited tidak muncul di stock opname karena tidak perlu manajemen stok.'
                 },
                 {
                     icon: 'ph-star', color: '#d97706',
-                    title: 'Poin & Reward',
-                    desc: 'Sistem loyalitas pelanggan. Terdiri dari 3 tab: (1) Aturan Poin — atur berapa poin yang didapat per produk, dan atur konversi nilai poin (misal 1 poin = Rp 1). (2) Daftar Reward — kelola hadiah yang bisa ditukar dengan poin. (3) Poin Pelanggan — lihat poin semua pelanggan, tier (Bronze/Silver/Gold/Platinum), dan riwayat poin. Poin bisa ditukar saat checkout sebagai potongan harga.'
+                    title: '⭐ Poin & Reward',
+                    desc: 'Sistem loyalitas pelanggan dengan 3 tab: (1) Tab "Aturan Poin" — atur nilai konversi poin (misal: setiap belanja Rp 10.000 = 1 poin, atau 1 poin = Rp 100 potongan), atur poin per produk di menu Produk Saya. (2) Tab "Reward" — tambah hadiah yang bisa ditukar poin: nama reward, foto, jumlah poin yang dibutuhkan. (3) Tab "Poin Pelanggan" — lihat semua pelanggan beserta poin aktif, akumulasi poin sepanjang masa, tier (Bronze < 100, Silver 100-499, Gold 500-1999, Platinum ≥ 2000), dan riwayat transaksi. Cara redeem poin saat kasir: setelah pilih member, masukkan jumlah poin yang ingin ditukar di kolom redeem → nilai potongan muncul otomatis. Tombol "Gunakan semua poin" untuk pakai semua poin sekaligus.'
                 },
                 {
                     icon: 'ph-file-text', color: '#059669',
-                    title: 'Laporan',
-                    desc: 'Laporan riwayat transaksi lengkap. Fitur: filter berdasarkan hari ini, minggu ini, bulan ini, atau semua waktu. Tampilkan ringkasan omzet, jumlah transaksi, dan total refund. Setiap transaksi bisa di-preview struk, dicetak ulang, diunduh PDF, atau dibatalkan (refund). Saat membatalkan, pilih produk spesifik yang ingin dibatalkan — tidak harus seluruh transaksi. Pembatalan memerlukan password khusus yang diatur di menu Pengaturan.'
+                    title: '📄 Laporan Transaksi',
+                    desc: 'Riwayat lengkap semua transaksi. Filter tersedia: Hari Ini, 7 Hari Terakhir, Bulan Ini, atau Semua. Ringkasan di bagian atas menampilkan total omzet, jumlah transaksi, dan total nilai refund. Setiap baris transaksi menampilkan: No. Transaksi, Tanggal & Jam, Produk yang dibeli, Nama Member (jika ada), Metode Bayar, dan Total. Aksi per transaksi: (A) Struk — preview teks struk lalu cetak ulang. (B) PDF — unduh struk dalam format PDF. (C) Batalkan — batalkan sebagian atau seluruh produk dalam transaksi (memerlukan password pembatalan). Transaksi yang sudah dibatalkan ditandai dengan latar merah dan label "Dibatalkan". Di mobile: tabel bisa di-scroll horizontal untuk melihat semua kolom.'
                 },
                 {
                     icon: 'ph-gear', color: '#475569',
-                    title: 'Pengaturan',
-                    desc: 'Konfigurasi sistem: (1) Pengaturan Toko — nama toko, alamat, no HP, dan pesan footer struk. (2) Foto QRIS — upload gambar QRIS toko untuk ditampilkan saat pembayaran. (3) Kredensial Admin — ubah username dan password login admin. (4) Password Pembatalan Transaksi — atur password khusus untuk memverifikasi pembatalan transaksi (berlaku untuk semua pengguna). (5) Pembersihan Data — hapus riwayat transaksi lama secara manual untuk menjaga performa.'
+                    title: '⚙️ Pengaturan Sistem',
+                    desc: 'Konfigurasi lengkap aplikasi (hanya admin): (1) Pengaturan Toko — nama toko (muncul di struk & login), alamat 2 baris, no HP (otomatis awalan 0), pesan footer struk. Semua tersimpan otomatis. (2) Foto QRIS — upload gambar QRIS untuk muncul saat pembayaran QRIS. (3) Kredensial Admin — ubah username dan password login admin. (4) Password Pembatalan — password khusus untuk memverifikasi pembatalan transaksi, berlaku untuk semua user. (5) Pembersihan Data — hapus transaksi lama (lebih dari N hari) secara manual untuk menjaga performa. Data poin member tidak ikut terhapus. Semua perubahan pengaturan langsung tersimpan saat tombol Simpan diklik.'
                 },
                 {
-                    icon: 'ph-user-circle-gear', color: '#7c3aed',
-                    title: 'Karyawan',
-                    desc: 'Manajemen akun karyawan (hanya admin). Tambah, edit, atau hapus akun karyawan. Setiap karyawan memiliki username dan password sendiri untuk login. Karyawan hanya dapat mengakses menu: Dashboard, Penjualan, Pelanggan, Poin & Reward, Laporan, Clerek, dan FAQ. Menu Produk Saya, Stock Opname, Pengaturan, dan Karyawan hanya bisa diakses admin.'
+                    icon: 'ph-user-circle-gear', color: '#9333ea',
+                    title: '👤 Manajemen Karyawan (Admin Only)',
+                    desc: 'Kelola akun login karyawan — hanya dapat diakses oleh admin. Cara tambah karyawan: klik "+ Tambah Karyawan" → isi Nama, Username (unik), Password, No. HP, Email, Alamat → Simpan. Karyawan bisa langsung login dengan akun tersebut. Hak akses karyawan: Dashboard, Penjualan, Pelanggan, Poin & Reward, Laporan, Clerek (Shift), dan FAQ. Menu yang tidak dapat diakses karyawan: Produk Saya, Stock Opname, Pengaturan, dan Karyawan. Edit karyawan: klik ikon pensil. Hapus: klik ikon tempat sampah → konfirmasi. Karyawan yang dihapus tidak bisa login lagi. Perubahan data karyawan langsung tersimpan di sistem.'
                 },
                 {
                     icon: 'ph-user-check', color: '#0369a1',
-                    title: 'Clerek (Manajemen Shift)',
-                    desc: 'Sistem manajemen shift kasir. Fitur: (1) Buka Shift — catat kas awal sebelum mulai berjualan. (2) Mutasi Kas — catat pemasukan/pengeluaran kas selama shift. (3) Tutup Shift — hitung selisih kas akhir vs omzet. (4) Catatan — buat catatan to-do atau pesan antar shift. (5) Riwayat Shift — lihat semua shift sebelumnya. Admin bisa "Ambil Alih Shift" aktif karyawan untuk bisa mengakses menu Penjualan.'
+                    title: '🕐 Clerek — Manajemen Shift',
+                    desc: 'Sistem manajemen shift kasir harian. Alur shift: (1) Buka Shift — masukkan kas awal (uang di laci kasir), konfirmasi, klik "Mulai Shift" → animasi loading 2 detik → shift tercatat di sistem. Karyawan WAJIB buka shift sebelum bisa akses menu Penjualan. (2) Selama shift aktif: catat Mutasi Kas (pemasukan/pengeluaran kas di luar transaksi penjualan, misal: pembelian modal, penarikan kas). Tambah catatan/to-do untuk shift berikutnya. (3) Tutup Shift — masukkan kas akhir (hitung uang di laci), konfirmasi → animasi loading 2 detik → sistem menghitung selisih kas dan omzet. (4) Riwayat Shift — lihat semua shift sebelumnya beserta kas awal, kas akhir, omzet, dan selisih. Admin: bisa "Ambil Alih Shift" aktif karyawan untuk akses Penjualan tanpa tutup shift.'
                 },
+
+                // ═══════════════════════════════════════════════
+                //  FITUR KHUSUS
+                // ═══════════════════════════════════════════════
                 {
-                    icon: 'ph-question', color: '#6366f1',
-                    title: 'FAQ (Bantuan)',
-                    desc: 'Halaman ini — berisi penjelasan lengkap semua menu dan fungsi aplikasi kasir Z-TRONIK. Gunakan sebagai referensi jika ada fitur yang belum dipahami.'
-                },
-                {
-                    icon: 'ph-arrow-u-up-left', color: '#dc2626',
-                    title: 'Cara Membatalkan Sebagian Produk dalam Transaksi',
-                    desc: 'Buka menu Laporan → cari transaksi → klik tombol "Batalkan". Akan muncul daftar produk dalam transaksi tersebut — centang produk yang ingin dibatalkan (boleh sebagian atau semua). Masukkan password pembatalan, lalu klik "Batalkan". Stok produk yang dibatalkan akan otomatis dikembalikan. Untuk full refund, pilih semua produk — transaksi akan ditandai "Dibatalkan".'
+                    icon: 'ph-printer', color: '#374151',
+                    title: '🖨️ Cetak Struk (58mm)',
+                    desc: 'Struk dicetak otomatis setelah setiap transaksi selesai menggunakan printer thermal 58mm. Isi struk: nama toko (font besar), alamat (2 baris, rata tengah), no telp, garis pemisah, no transaksi, tanggal & jam, kasir, nama member & ID (jika ada), daftar produk (nama + qty × harga + total), subtotal, diskon, total, metode bayar, tunai & kembalian (jika tunai), garis pemisah, pesan footer. Cetak ulang dari Laporan: klik tombol "Struk" → preview teks muncul di modal → klik "Cetak". Teknis: sistem menggunakan hidden iframe untuk cetak agar tidak diblokir popup blocker browser. Pastikan browser mengizinkan print dari aplikasi. Di mobile: setelah klik cetak, dialog print sistem akan muncul — pilih printer yang terhubung.'
                 },
                 {
                     icon: 'ph-barcode', color: '#0f766e',
-                    title: 'Scan Barcode',
-                    desc: 'Fitur scan barcode tersedia di menu Penjualan (tombol "Scan") dan di form Produk Saya saat tambah/edit produk. Membutuhkan izin kamera dari browser. Arahkan kamera ke barcode/QR code produk — produk langsung ditambahkan ke keranjang atau kode barcode terisi otomatis di form.'
+                    title: '📷 Scan Barcode / QR Code',
+                    desc: 'Fitur scan tersedia di 2 tempat: (A) Menu Penjualan — tombol "Scan" di toolbar pencarian. Setelah scan berhasil, produk langsung masuk keranjang. (B) Form Produk Saya — tombol kamera di field Barcode saat tambah/edit produk. Cara pakai: klik tombol Scan → browser meminta izin kamera → izinkan → arahkan kamera ke barcode/QR code → sistem otomatis mengenali dan menutup scanner. Tips desktop: gunakan webcam yang menghadap ke depan. Tips mobile: gunakan kamera belakang (default). Jika kamera tidak bisa diakses: pastikan browser mendapat izin kamera di pengaturan situs, gunakan HTTPS bukan HTTP. Barcode yang didukung: hampir semua format (QR Code, Code128, EAN, UPC, dll).'
                 },
                 {
-                    icon: 'ph-printer', color: '#374151',
-                    title: 'Cetak Struk',
-                    desc: 'Struk dicetak otomatis setelah setiap transaksi selesai (format 58mm). Struk berisi: nama toko, no transaksi, tanggal/jam, nama kasir, data member (jika ada), daftar produk, total, metode bayar, dan pesan footer. Struk lama bisa dicetak ulang dari menu Laporan → klik ikon preview/cetak pada transaksi yang diinginkan.'
+                    icon: 'ph-infinity', color: '#7c3aed',
+                    title: '♾️ Produk Unlimited (Tanpa Stok)',
+                    desc: 'Fitur Unlimited cocok untuk produk layanan/jasa yang tidak memiliki stok fisik, seperti: pulsa, token listrik, jasa print, pengiriman, dll. Cara mengaktifkan: buka form tambah/edit produk → centang checkbox "Unlimited (tanpa stok)" → field Stok Real dan Stok Minimal otomatis tersembunyi. Produk unlimited: (A) Tidak ada batas qty saat ditambah ke keranjang — bisa tambah berapa saja. (B) Tidak muncul di peringatan stok menipis di Dashboard dan sidebar. (C) Tidak perlu dimasukkan dalam Stock Opname. (D) Badge stok di grid POS tampil sebagai ∞ berwarna ungu. (E) Saat refund/pembatalan, stok tidak ikut dikembalikan (karena memang tidak ada stok). '
+                },
+                {
+                    icon: 'ph-arrow-u-up-left', color: '#dc2626',
+                    title: '↩️ Batalkan / Refund Transaksi',
+                    desc: 'Cara membatalkan transaksi: (1) Buka menu Laporan → temukan transaksi yang ingin dibatalkan. (2) Klik tombol merah "Batalkan". (3) Muncul daftar semua produk dalam transaksi — centang produk yang ingin dibatalkan (bisa sebagian atau semua). (4) Masukkan Password Pembatalan (diatur di menu Pengaturan). (5) Klik "Batalkan". Hasil: stok produk yang dibatalkan otomatis dikembalikan (kecuali produk Unlimited). Jika semua produk dibatalkan, transaksi ditandai "Dibatalkan" (full refund). Jika sebagian, total transaksi dikurangi. Transaksi yang sudah dibatalkan tidak bisa dibatalkan lagi. Catatan: stok dan data transaksi otomatis diperbarui di sistem.'
+                },
+                {
+                    icon: 'ph-tag', color: '#ea580c',
+                    title: '💰 Diskon & Harga Grosir',
+                    desc: 'Z-TRONIK mendukung 3 jenis diskon/harga khusus: (1) Promo Produk — potongan harga tetap per produk (Rp), diatur di form Produk Saya kolom "Nominal Promo". Berlaku otomatis untuk semua pembeli, ditampilkan sebagai badge "Promo" di keranjang. (2) Harga Grosir — harga khusus untuk pembelian qty ≥ Min Beli Grosir, diatur di form produk. Badge "Grosir" muncul otomatis di keranjang saat qty memenuhi syarat. (3) Diskon Tambahan per Transaksi — diatur langsung di panel keranjang saat checkout, bisa pilih mode Rp (nominal tetap) atau % (persentase dari subtotal). Ketiga diskon bisa dikombinasikan. Urutan perhitungan: Harga Grosir/Promo per produk → subtotal → Diskon Tambahan → Redeem Poin → Grand Total.'
+                },
+                {
+                    icon: 'ph-credit-card', color: '#2563eb',
+                    title: '💳 Metode Pembayaran',
+                    desc: 'Z-TRONIK mendukung 3 metode bayar: (1) Tunai — masukkan nominal uang yang diterima, sistem otomatis hitung kembalian. Struk menampilkan baris Tunai dan Kembali. (2) QRIS — gambar QRIS yang diupload di Pengaturan tampil di layar kasir untuk dipindai pelanggan. Setelah konfirmasi, transaksi selesai. (3) Kartu — untuk pembayaran kartu debit/kredit via EDC, sistem hanya mencatat tanpa proses kartu (EDC terpisah). Semua metode bayar tercatat di laporan dan struk. Untuk ganti metode: klik tombol pilihan metode di panel keranjang sebelum klik Proses Pembayaran. Default metode: Tunai.'
+                },
+
+                {
+                    icon: 'ph-shield-check', color: '#16a34a',
+                    title: '🔒 Keamanan & Hak Akses',
+                    desc: 'Z-TRONIK memiliki 2 level akses: (1) Admin — akses penuh semua menu, termasuk Pengaturan, Produk, Karyawan, Stock Opname. Bisa ambil alih shift karyawan. (2) Karyawan — akses terbatas: Dashboard, Penjualan, Pelanggan, Poin & Reward, Laporan, Clerek, FAQ. Tidak bisa akses menu sensitif. Keamanan tambahan: Password Pembatalan Transaksi — password terpisah khusus untuk membatalkan transaksi, berbeda dengan password login. Diatur di menu Pengaturan. Tips keamanan: (A) Ganti password admin default (user13) segera setelah setup. (B) Berikan akun karyawan hanya untuk kasir yang perlu. (C) Hapus akun karyawan yang sudah tidak bekerja. (D) Password pembatalan jangan sama dengan password login.'
+                },
+
+
+
+                // ═══ DETAIL FITUR LANJUTAN ═══
+                {
+                    icon: 'ph-tag', color: '#dc2626',
+                    title: '🏷️ Cara Atur Harga Grosir',
+                    desc: 'Harga grosir adalah harga spesial yang berlaku otomatis jika pelanggan membeli dalam jumlah tertentu. Cara mengatur: (1) Produk Saya → Tambah/Edit produk. (2) Isi "Harga Grosir (Rp)" — contoh: Rp 9.500. (3) Isi "Min Beli Grosir (Unit)" — contoh: 10. (4) Simpan. Cara kerja: saat pelanggan beli produk tersebut 10 unit atau lebih, harga per unit otomatis berubah ke Rp 9.500. Di keranjang muncul badge oranye "Grosir". Jika qty turun di bawah minimum, harga kembali ke normal. Min Beli 0 berarti harga grosir tidak aktif.'
+                },
+                {
+                    icon: 'ph-percent', color: '#dc2626',
+                    title: '💸 Cara Beri Diskon Saat Transaksi',
+                    desc: 'Ada dua jenis diskon di Z-TRONIK: (1) Diskon Per Produk (Promo) — diatur di form produk, berlaku permanen untuk setiap transaksi produk tersebut. (2) Diskon Tambahan Per Transaksi — diatur saat checkout di panel keranjang kanan. Cara pakai diskon tambahan: di bagian "Ringkasan Belanja" klik tombol "Rp" atau "%" untuk ganti tipe diskon, lalu isi angkanya. Contoh: diskon Rp 5.000 artinya total dikurangi Rp 5.000. Diskon 10% artinya total dikurangi 10% dari subtotal. Kedua jenis diskon bisa digabung.'
+                },
+                {
+                    icon: 'ph-star-four', color: '#d97706',
+                    title: '🌟 Tier Member: Bronze, Silver, Gold, Platinum',
+                    desc: 'Tier member ditentukan berdasarkan total poin akumulasi sepanjang waktu (bukan poin aktif yang bisa ditukar). Cara lihat/atur tier: menu Poin & Reward → tab "Aturan Poin" → bagian Tier. Setiap tier bisa diatur: nama, batas poin minimum, warna, dan multiplier poin. Contoh: Gold = akumulasi 1.000 poin, multiplier 1.5x artinya poin yang didapat 1.5 kali lipat. Poin akumulasi tidak berkurang meski poin ditukar — reset akumulasi bisa dilakukan manual di menu Poin & Reward. Tier tampil di data pelanggan dan di struk saat transaksi dengan member.'
+                },
+                {
+                    icon: 'ph-stack-plus', color: '#059669',
+                    title: '📥 Cara Tambah Stok Produk (Restok)',
+                    desc: 'Ada 3 cara menambah stok: (1) Quick Stock Update — di menu Produk Saya, klik ikon tumpukan (+) pada produk → masukkan jumlah penambahan (contoh: +50) → klik Tambah. Langsung tersimpan. (2) Edit Produk — klik ikon pensil → ubah angka di field "Stok Real" → Simpan. (3) Stock Opname — cocok untuk restok banyak produk sekaligus, atau setelah penghitungan fisik. Stok produk unlimited tidak perlu diupdate — selalu tersedia tanpa batas.'
+                },
+
+                {
+                    icon: 'ph-user-plus', color: '#0891b2',
+                    title: '🆕 Cara Daftarkan Member Baru',
+                    desc: 'Ada dua cara mendaftarkan member: (1) Via menu Pelanggan — klik "+ Tambah Pelanggan" → isi nama (wajib), no HP (wajib), email dan alamat (opsional) → Simpan. ID member dibuat otomatis (ZTR0000001, dst). (2) Langsung saat transaksi — jika pelanggan belum terdaftar, daftarkan dulu di menu Pelanggan, lalu panggil di kasir. Member yang baru didaftarkan bisa langsung digunakan di kasir setelah disimpan dan data di-refresh. ID member bisa dicari berdasarkan No. HP atau angka ID saja (tidak perlu ketik "ZTR").'
+                },
+
+
+
+                {
+                    icon: 'ph-clock', color: '#7c3aed',
+                    title: '⏱️ Animasi Loading — Kapan Muncul',
+                    desc: 'Z-TRONIK menampilkan animasi loading fullscreen (spinner + nama toko) di beberapa kondisi: (1) Login — muncul 2 detik setelah klik Masuk sebelum masuk ke sistem. (2) Logout — muncul 2 detik setelah konfirmasi keluar. (3) Buka Shift — muncul 2 detik setelah konfirmasi mulai shift. (4) Tutup Shift — muncul 2 detik setelah konfirmasi akhiri shift. Tujuannya memberikan feedback visual bahwa sistem sedang memproses, dan memberi jeda sebelum tampilan berubah. Refresh data (klik Refresh di header) tidak menampilkan overlay — hanya ikon refresh berputar di header.'
+                },
+                {
+                    icon: 'ph-device-tablet', color: '#16a34a',
+                    title: '📲 Optimasi Z-TRONIK di Tablet (iPad / Android Tab)',
+                    desc: 'Untuk pengalaman terbaik di tablet: (1) Gunakan mode landscape (horizontal) — tampilan lebih lebar dan POS terlihat lebih lengkap. (2) Di Safari iPad: Settings → Safari → Request Desktop Website → All Websites (aktifkan) agar selalu tampil versi desktop. (3) Di Chrome Android tablet: menu ⋮ → "Desktop site" untuk tampilan desktop. (4) Ukuran layar ≥ 10 inci sangat direkomendasikan untuk tampilan desktop POS yang nyaman. (5) Tambahkan ke Home Screen untuk akses cepat. (6) Koneksi WiFi lebih stabil daripada data seluler untuk performa terbaik.'
+                },
+
+                {
+                    icon: 'ph-wrench', color: '#b45309',
+                    title: '🔧 Troubleshooting — Masalah Umum',
+                    desc: 'Solusi masalah yang sering terjadi: (1) Tidak bisa cetak struk — pastikan browser tidak memblokir print, coba klik Cetak di modal preview struk. Di Chrome: Settings → Privacy → Site Settings → izinkan pop-up jika diminta. (2) Kamera tidak bisa scan barcode — izinkan akses kamera di browser (klik ikon kunci/info di address bar → Izin Kamera). (3) Struk tidak rapi saat cetak — di dialog print browser, set paper size ke 58mm atau pilih "Thermal Paper". (4) Login tidak bisa — pastikan username dan password sudah benar, perhatikan huruf kapital. (5) Data tidak muncul setelah Refresh — coba klik tombol Refresh lagi, atau tutup dan buka ulang browser. (6) Produk tidak muncul di POS — pastikan produk sudah ditambahkan di menu Produk Saya dan stok > 0 (atau aktifkan Unlimited).'
+                },
+                {
+                    icon: 'ph-question', color: '#6366f1',
+                    title: '❓ Tips & Pintasan Berguna',
+                    desc: 'Tips penggunaan sehari-hari: (1) Tekan Enter setelah ketik username untuk pindah ke field password, Enter lagi untuk login — tanpa klik mouse. (2) Di POS, ketik nama/barcode di kolom pencarian untuk filter produk instan. (3) Gunakan fitur "Ambil Alih Shift" (admin) jika karyawan lupa tutup shift sebelum pulang. (4) Laporan bisa diunduh sebagai PDF atau CSV — klik tombol PDF/CSV di menu Laporan sesuai filter periode yang aktif. (5) Stok tidak berkurang otomatis setelah transaksi — update stok secara berkala via Stock Opname. (6) Gunakan mode landscape di tablet untuk tampilan POS yang lebih luas. (7) Tambahkan ke home screen HP: Chrome mobile → menu ⋮ → Add to Home Screen — Z-TRONIK terbuka seperti aplikasi native.'
+                },
+                {
+                    icon: 'ph-receipt', color: '#059669',
+                    title: '📄 Cara Export Laporan ke PDF & CSV',
+                    desc: 'Z-TRONIK menyediakan beberapa cara export laporan: (1) PDF per transaksi — di menu Laporan, klik tombol "PDF" pada baris transaksi yang diinginkan. File PDF struk 80mm otomatis diunduh. (2) Preview → Cetak sebagai PDF — klik "Struk" → muncul preview → klik Cetak → di dialog print browser pilih "Save as PDF". (3) Export rekap PDF — di toolbar Laporan, pilih periode filter (Hari Ini, 7 Hari, Bulan Ini, 2 Bulan, 3 Bulan, atau Custom) lalu klik tombol "PDF" untuk mengunduh rekap seluruh transaksi periode tersebut. (4) Export CSV — klik tombol "CSV" di toolbar Laporan untuk file yang bisa dibuka di Excel atau Google Sheets. (5) Laporan stok menipis — di Dashboard klik "Unduh PDF" di kartu Stok Menipis.'
+                },
+                {
+                    icon: 'ph-file-pdf', color: '#dc2626',
+                    title: '📊 Cara Lihat Rekap Penjualan per Periode',
+                    desc: 'Di menu Laporan tersedia 7 filter periode: (1) Semua — seluruh riwayat yang tersimpan di sistem. (2) Hari Ini — transaksi hari ini saja. (3) 7 Hari — tujuh hari terakhir. (4) Bulan Ini — bulan kalender berjalan. (5) 2 Bulan — 60 hari terakhir. (6) 3 Bulan — 90 hari terakhir. (7) Pilih Tanggal — tentukan rentang dari-sampai secara manual (maks 3 bulan ke belakang). Ringkasan otomatis tampil di atas tabel: Total Omzet, Jumlah Transaksi, Rata-rata per Transaksi, dan Total Dibatalkan. Klik tombol PDF atau CSV untuk mengunduh laporan sesuai filter yang sedang aktif.'
+                },
+                {
+                    icon: 'ph-warning-octagon', color: '#dc2626',
+                    title: '🚫 Hal yang Sebaiknya Tidak Dilakukan',
+                    desc: 'Hindari hal berikut agar sistem berjalan normal: (1) Jangan gunakan lebih dari satu tab browser dengan Z-TRONIK secara bersamaan — bisa menyebabkan konflik sesi login. (2) Jangan tutup tab browser saat sedang proses simpan data — tunggu notifikasi "berhasil" muncul sebelum menutup. (3) Jangan input karakter khusus seperti tanda kutip atau simbol aneh di nama produk atau nama toko — bisa menyebabkan tampilan tidak normal. (4) Jangan hapus akun admin satu-satunya sebelum membuat admin cadangan. (5) Jangan berbagi akun login dengan banyak orang — buat akun karyawan terpisah untuk setiap kasir. (6) Jangan lupa tutup shift sebelum kasir pulang — jika lupa, admin bisa ambil alih shift via menu Clerek.'
+                },
+                {
+                    icon: 'ph-clock', color: '#7c3aed',
+                    title: '⏱️ Animasi Loading — Kapan Muncul',
+                    desc: 'Z-TRONIK menampilkan animasi loading fullscreen (spinner + nama toko) di beberapa kondisi: (1) Login — muncul 2 detik setelah klik Masuk sebelum masuk ke sistem. (2) Logout — muncul 2 detik setelah konfirmasi keluar. (3) Buka Shift — muncul 2 detik setelah konfirmasi mulai shift. (4) Tutup Shift — muncul 2 detik setelah konfirmasi akhiri shift. Tujuannya memberikan feedback visual bahwa sistem sedang memproses. Refresh data (klik Refresh di header) tidak menampilkan overlay — hanya ikon refresh berputar di header. Jika loading terlalu lama saat Refresh, klik lagi tombol Refresh atau periksa koneksi internet.'
+                },
+                {
+                    icon: 'ph-device-tablet', color: '#16a34a',
+                    title: '📲 Optimasi Z-TRONIK di Tablet',
+                    desc: 'Untuk pengalaman terbaik di tablet: (1) Gunakan mode landscape (horizontal) — tampilan POS lebih lebar dan lengkap. (2) Di Safari iPad: Settings → Safari → Request Desktop Website → All Websites (aktifkan) agar selalu tampil versi desktop. (3) Di Chrome Android tablet: menu ⋮ → "Desktop site" untuk tampilan desktop. (4) Ukuran layar ≥ 10 inci sangat direkomendasikan untuk tampilan POS kasir yang nyaman. (5) Tambahkan ke Home Screen untuk akses cepat seperti aplikasi native. (6) Koneksi WiFi lebih disarankan daripada data seluler untuk performa lebih stabil.'
                 },
             ];
 
@@ -5407,7 +5617,7 @@
                 + accordionItems
                 + '</div>'
                 + navHtml
-                + '<p style="text-align:center;font-size:11px;color:#9ca3af;margin-top:16px;">Z-TRONIK POS &bull; Sistem Kasir Digital &bull; Versi 6.1</p>'
+                + '<p style="text-align:center;font-size:11px;color:#9ca3af;margin-top:16px;">Z-TRONIK POS &bull; Sistem Kasir Digital &bull; Versi 6.2</p>'
                 + '</div>';
         }
 
