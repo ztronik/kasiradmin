@@ -592,7 +592,10 @@
                             return Object.assign({}, c, { tier: getTierInfo(c.poin).name });
                         });
                     }
-                    if (data.adminLogin)   authAdmin    = data.adminLogin;
+                    // FIX #1: Hanya update authAdmin jika data valid (ada username & password)
+                    if (data.adminLogin && data.adminLogin.username && data.adminLogin.password) {
+                        authAdmin = data.adminLogin;
+                    }
                     if (data.karyawanList) authKaryawan = data.karyawanList.map(function(k) {
                         return Object.assign({}, k, { nohp: normalizePhoneNumber(k.nohp||'') });
                     });
@@ -652,9 +655,14 @@
                     }
                     var wasFirstLoad = state.isLoading;
                     state.isLoading = false;
+                    // FIX: Update nama toko di login screen supaya sinkron
+                    var _ltn = document.getElementById('login-toko-nama');
+                    if (_ltn && namaTokoStruk) _ltn.textContent = namaTokoStruk;
+                    var _lln = document.getElementById('login-loading-nama');
+                    if (_lln && namaTokoStruk) _lln.textContent = namaTokoStruk;
                     showToast('Data dimuat: ' + state.products.length + ' produk, ' + state.customers.length + ' pelanggan.', 'success');
-                    // Render ulang hanya jika ini firstLoad atau sedang di halaman yang menunggu data
-                    if (wasFirstLoad) renderContent();
+                    // FIX #2 & #3: Render hanya jika user sudah login — cegah login screen tertimpa
+                    if (currentUser && wasFirstLoad) renderContent();
                     // Auto-cleanup silent: transaksi > 30 hari
                     (function() {
                         var batas = new Date();
@@ -691,9 +699,10 @@
                     state.isLoading = false;
                     state.fetchError = (data && data.message) || 'Status error dari server';
                     showToast('Error dari GAS: ' + state.fetchError, 'error');
-                    if (state.products.length === 0) renderContent();
+                    // FIX: Hanya render jika user sudah login, agar login screen tidak tertimpa
+                    if (currentUser && state.products.length === 0) renderContent();
                 }
-                renderContent();
+                // FIX #2: renderContent() ganda DIHAPUS — sudah ditangani di dalam masing-masing blok di atas
         }
 
         // GAS POST — tetap pakai fetch (POST tidak kena CORS di GAS)
@@ -6549,12 +6558,20 @@
             var ln = document.getElementById('login-toko-nama');
             if (ln && namaTokoStruk) ln.textContent = namaTokoStruk;
 
-            // Restore sesi jika browser belum ditutup
+            // FIX #4: Restore sesi dengan validasi lebih ketat
             var savedSession = sessionStorage.getItem('ztronik_session');
+            var sessionRestored = false;
             if (savedSession) {
                 try {
-                    currentUser = JSON.parse(savedSession);
-                    showApp();
+                    var parsed = JSON.parse(savedSession);
+                    // Validasi sesi: harus ada username dan role yang valid
+                    if (parsed && parsed.username && parsed.role) {
+                        currentUser = parsed;
+                        showApp();
+                        sessionRestored = true;
+                    } else {
+                        sessionStorage.removeItem('ztronik_session');
+                    }
                 } catch(e) {
                     sessionStorage.removeItem('ztronik_session');
                 }
@@ -6571,7 +6588,9 @@
 
             fetchData();
             renderSidebarMenu();
-            renderContent();
+            // FIX: renderContent() hanya jika ada sesi yang dipulihkan
+            // Jika belum login, tampilkan login screen saja (tidak perlu renderContent)
+            if (sessionRestored) renderContent();
         });
 
     </script>
