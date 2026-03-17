@@ -2393,82 +2393,97 @@
                 return;
             }
 
-            // Buat record pembayaran hutang di sheet HutangPiutang
-            const hutangId = 'HT-' + new Date().getTime();
-            const now = new Date();
-            const tglStr = Utilities.formatDate(now, Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm:ss');
-            
+            const now   = new Date();
+            const noTrx = 'TRX' + Date.now().toString().slice(-8);
+            const hutangId = 'HT-' + Date.now();
+
+            // Catat ke hutangPiutangList lokal
             const hutangRecord = {
-                id: hutangId,
-                tipe: 'pelanggan',
-                nama: cust.name,
-                idPelanggan: cust.id,
-                keterangan: 'Pembayaran Hutang - Penjualan',
-                jumlah: grandTotal,
-                sudahDibayar: grandTotal,
-                tanggal: now.toISOString(),
-                jatuhTempo: now.toISOString(),
-                status: 'pembayaran_dicatat',
-                kasir: state.currentUser?.name || 'Operator',
-                catatanTrx: 'Pembayaran hutang dari transaksi penjualan',
-                riwayatBayar: JSON.stringify([{tanggal: now.toISOString(), jumlah: grandTotal, catatan: 'Pembayaran'}])
+                id:           hutangId,
+                tipe:         'pelanggan',
+                nama:         cust.name,
+                idPelanggan:  cust.id,
+                keterangan:   'Hutang dari transaksi ' + noTrx,
+                jumlah:       grandTotal,
+                sudahDibayar: 0,
+                tanggal:      now.toISOString(),
+                jatuhTempo:   '',
+                status:       'belum',
+                kasir:        currentUser ? currentUser.nama : '-',
+                catatanTrx:   'Dari POS - Metode Hutang',
+                riwayatBayar: []
             };
-
-            // Simpan ke GAS
-            if (GAS_URL) {
-                gasPost({ 
-                    action: 'savePembayaranHutang', 
-                    hutangRecord: hutangRecord 
-                }).catch(() => {});
-            }
-
-            // Catat di local data
             hutangPiutangList.push(hutangRecord);
 
-            // Update total belanja pelanggan
+            // Kirim hutang ke GAS
+            if (GAS_URL) {
+                gasPost({ action: 'saveHutang', hutang: hutangRecord }).catch(function(){});
+            }
+
+            // Update total belanja pelanggan (tanpa tambah poin karena hutang)
             const sc = state.customers.find(c => c.id === cust.id);
             if (sc) {
                 sc.totalBelanja = (sc.totalBelanja || 0) + grandTotal;
+                if (GAS_URL) {
+                    gasPost({
+                        action: 'updatePoinAfterCheckout',
+                        customerId: sc.id,
+                        poin: sc.poin,
+                        poinAkumulasi: sc.poinAkumulasi || 0,
+                        totalBelanja: sc.totalBelanja
+                    }).catch(function(){});
+                }
             }
 
-            // Buat struk penjualan
+            // Simpan ke salesHistory
             const saleRecord = {
-                id: generateTransactionId(),
-                tanggal: now,
-                kasir: state.currentUser?.name || 'Operator',
-                items: state.cart,
-                subtotal: grandTotal,
-                metode: 'Hutang',
-                bayar: 0,
-                kembalian: 0,
-                diskon: 0,
-                idPelanggan: cust.id,
-                namaPelanggan: cust.name,
-                poinDipakai: state.posPoinRedeem || 0,
+                id:       noTrx,
+                date:     now.toISOString(),
+                items:    state.cart.map(it => ({ name: it.name, qty: it.qty, price: getItemActivePrice(it), total: getItemActivePrice(it) * it.qty })),
+                total:    grandTotal,
+                method:   'Hutang',
+                member:   cust.name,
+                memberId: cust.id,
+                discount: state.discountValue || 0,
+                poinRedeem: state.posPoinRedeem || 0,
                 poinDidapat: 0
             };
+            state.salesHistory.unshift(saleRecord);
 
-            // Simpan transaksi ke GAS
+            // Kirim sale ke GAS
             if (GAS_URL) {
                 gasPost({
-                    action: 'savePenjualan',
-                    saleRecord: saleRecord
-                }).catch(() => {});
+                    action: 'saveSale',
+                    sale: {
+                        id: noTrx,
+                        date: now.toISOString(),
+                        kasir: currentUser ? currentUser.nama : '-',
+                        items: saleRecord.items,
+                        total: grandTotal,
+                        paymentMethod: 'Hutang',
+                        bayar: 0,
+                        kembalian: 0,
+                        discount: state.discountValue || 0,
+                        customerId: cust.id,
+                        customerName: cust.name,
+                        poinDipakai: state.posPoinRedeem || 0,
+                        poinDidapat: 0
+                    }
+                }).catch(function(){});
             }
 
-            // Kosongkan cart
-            state.cart = [];
-            state.discountValue = 0;
-            state.posPoinRedeem = 0;
-            state.posActiveMember = null;
-            state.paymentMethod = 'Tunai';
+            // Print struk
+            printStruk(grandTotal, 0, 0, noTrx);
+            closePaymentModal();
 
+            // Reset cart
+            state.cart            = [];
+            state.discountValue   = 0;
+            state.posActiveMember = null;
+            state.posPoinRedeem   = 0;
+            state.paymentMethod   = 'Tunai';
             renderCart();
-            renderContent();
-            
-            showAlert('Pembayaran Hutang Tercatat', 
-                'Pembayaran hutang sebesar ' + formatRp(grandTotal) + ' untuk ' + cust.name + ' telah berhasil dicatat.\\nSilakan cek menu Hutang/Piutang untuk detail lebih lanjut.',
-                'success');
+            showToast('Transaksi hutang berhasil dicatat!', 'success');
         }
 
         function processPayment(grandTotal) {
@@ -7855,6 +7870,7 @@
                 + '<option value="sisa_desc"'+(hutangSort==='sisa_desc'?' selected':'')+'>Sisa hutang terbesar</option>'
                 + '</select>'
                 + (tab === 'supplier' ? '<button onclick="downloadHutangSupplierPDF()" style="display:flex;align-items:center;gap:5px;padding:7px 12px;background:#2563eb;color:#fff;border:none;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;"><i class="ph ph-file-pdf text-sm"></i> Unduh PDF</button>' : '')
+                + (tab === 'pelanggan' ? '<button onclick="downloadHutangPelangganPDF()" style="display:flex;align-items:center;gap:5px;padding:7px 12px;background:#dc2626;color:#fff;border:none;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;"><i class="ph ph-file-pdf text-sm"></i> Unduh PDF</button>' : '')
                 + '<div style="display:flex;gap:5px;flex-wrap:wrap;">'+filterHtml+'</div>'
                 + '</div>'
                 // Table
@@ -8084,6 +8100,214 @@
             }
 
             var fileName = 'Hutang_Supplier_' + namaToko.replace(/\s/g,'_') + '_' + now.toISOString().slice(0,10) + '.pdf';
+            doc.save(fileName);
+        }
+
+        // ── UNDUH PDF SEMUA PIUTANG PELANGGAN ────────────────────────
+        function downloadHutangPelangganPDF() {
+            var pelanggan = hutangPiutangList.filter(function(h){ return h.tipe === 'pelanggan'; });
+            if (pelanggan.length === 0) {
+                showAlert('Tidak Ada Data', 'Belum ada data hutang pelanggan.', 'info');
+                return;
+            }
+
+            // Sort sesuai state aktif
+            var sortKey = state.hutangSort || 'default';
+            if (sortKey === 'default') {
+                pelanggan.sort(function(a,b){
+                    var order = {belum:0, cicilan:1, lunas:2};
+                    var ao = order[a.status]||0, bo = order[b.status]||0;
+                    if (ao !== bo) return ao - bo;
+                    if (a.jatuhTempo && b.jatuhTempo) return new Date(a.jatuhTempo) - new Date(b.jatuhTempo);
+                    return 0;
+                });
+            } else {
+                pelanggan.sort(function(a,b){
+                    if (sortKey === 'nama_asc')   return a.nama.localeCompare(b.nama, 'id');
+                    if (sortKey === 'nama_desc')  return b.nama.localeCompare(a.nama, 'id');
+                    if (sortKey === 'total_asc')  return a.jumlah - b.jumlah;
+                    if (sortKey === 'total_desc') return b.jumlah - a.jumlah;
+                    if (sortKey === 'sisa_asc')   return (a.jumlah-a.sudahDibayar) - (b.jumlah-b.sudahDibayar);
+                    if (sortKey === 'sisa_desc')  return (b.jumlah-b.sudahDibayar) - (a.jumlah-a.sudahDibayar);
+                    return 0;
+                });
+            }
+
+            var { jsPDF } = window.jspdf;
+            var doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+            var namaToko = (typeof pengaturan !== 'undefined' && pengaturan.nama_toko) ? pengaturan.nama_toko : 'Z-TRONIK';
+            var now = new Date();
+            var tglCetak = now.toLocaleDateString('id-ID', { day:'2-digit', month:'long', year:'numeric' });
+            var w = doc.internal.pageSize.getWidth();
+            var margin = 14;
+
+            // ── Header (merah) ──
+            doc.setFillColor(220, 38, 38);
+            doc.rect(0, 0, w, 28, 'F');
+            doc.setTextColor(255, 255, 255);
+            doc.setFontSize(15);
+            doc.setFont('helvetica', 'bold');
+            doc.text('LAPORAN PIUTANG PELANGGAN', margin, 11);
+            doc.setFontSize(9);
+            doc.setFont('helvetica', 'normal');
+            doc.text(namaToko, margin, 18);
+            doc.text('Dicetak: ' + tglCetak, w - margin, 18, { align: 'right' });
+
+            // ── Summary bar ──
+            var totalHutang = pelanggan.reduce(function(s,h){ return s+h.jumlah; }, 0);
+            var totalBayar  = pelanggan.reduce(function(s,h){ return s+h.sudahDibayar; }, 0);
+            var totalSisa   = totalHutang - totalBayar;
+            var jumlahAktif = pelanggan.filter(function(h){ return h.status !== 'lunas'; }).length;
+            var today = new Date(); today.setHours(0,0,0,0);
+            var jumlahJatuh = pelanggan.filter(function(h){
+                if (h.status === 'lunas' || !h.jatuhTempo) return false;
+                return new Date(h.jatuhTempo) <= today;
+            }).length;
+
+            doc.setFillColor(255, 241, 242);
+            doc.rect(0, 28, w, 18, 'F');
+            doc.setFontSize(8);
+            doc.setFont('helvetica', 'bold');
+            var summaryItems = [
+                { label: 'Total Pelanggan', val: pelanggan.length + ' pelanggan' },
+                { label: 'Total Piutang',   val: formatRp(totalHutang) },
+                { label: 'Sudah Dibayar',   val: formatRp(totalBayar) },
+                { label: 'Sisa Piutang',    val: formatRp(totalSisa) },
+                { label: 'Jatuh Tempo',     val: jumlahJatuh + ' tagihan' }
+            ];
+            var colW = (w - margin*2) / summaryItems.length;
+            summaryItems.forEach(function(item, i) {
+                var x = margin + i * colW;
+                doc.setFont('helvetica', 'normal');
+                doc.setTextColor(100, 116, 139);
+                doc.text(item.label, x, 34);
+                doc.setFont('helvetica', 'bold');
+                doc.setTextColor(153, 27, 27);
+                doc.text(item.val, x, 40);
+            });
+
+            // ── Table ──
+            var startY = 50;
+            var cols = [
+                { header: 'No',             width: 8,  align: 'center' },
+                { header: 'Nama Pelanggan', width: 35, align: 'left' },
+                { header: 'Keterangan',     width: 44, align: 'left' },
+                { header: 'Total Piutang',  width: 28, align: 'right' },
+                { header: 'Sudah Bayar',    width: 28, align: 'right' },
+                { header: 'Sisa',           width: 24, align: 'right' },
+                { header: 'Status',         width: 21, align: 'center' }
+            ];
+
+            // Header row
+            doc.setFillColor(220, 38, 38);
+            doc.rect(margin, startY, w - margin*2, 7, 'F');
+            doc.setTextColor(255, 255, 255);
+            doc.setFontSize(7.5);
+            doc.setFont('helvetica', 'bold');
+            var cx = margin;
+            cols.forEach(function(col) {
+                var tx = col.align === 'right' ? cx + col.width - 1 : (col.align === 'center' ? cx + col.width/2 : cx + 1);
+                doc.text(col.header, tx, startY + 4.8, { align: col.align });
+                cx += col.width;
+            });
+
+            var y = startY + 7;
+
+            pelanggan.forEach(function(h, idx) {
+                var sisa = h.jumlah - h.sudahDibayar;
+                var isOverdue = h.status !== 'lunas' && h.jatuhTempo && (new Date(h.jatuhTempo) <= today);
+                var rowH = 8;
+
+                if (isOverdue && h.status !== 'lunas') {
+                    doc.setFillColor(255, 245, 245);
+                } else if (idx % 2 === 0) {
+                    doc.setFillColor(255, 255, 255);
+                } else {
+                    doc.setFillColor(253, 248, 248);
+                }
+                doc.rect(margin, y, w - margin*2, rowH, 'F');
+                doc.setDrawColor(245, 225, 225);
+                doc.line(margin, y + rowH, w - margin, y + rowH);
+
+                doc.setFontSize(7.5);
+                doc.setFont('helvetica', 'normal');
+                doc.setTextColor(31, 41, 55);
+
+                var statusLabel = h.status === 'lunas' ? 'Lunas' : (h.status === 'cicilan' ? 'Cicilan' : (isOverdue ? 'Jatuh Tempo' : 'Belum'));
+                var cells = [
+                    { val: String(idx+1),            align: 'center' },
+                    { val: h.nama,                   align: 'left',  maxW: 33 },
+                    { val: (h.keterangan||'-'),      align: 'left',  maxW: 42 },
+                    { val: formatRp(h.jumlah),       align: 'right', color: [31,41,55] },
+                    { val: formatRp(h.sudahDibayar), align: 'right', color: [22,163,74] },
+                    { val: formatRp(sisa),            align: 'right', color: sisa > 0 ? [220,38,38] : [22,163,74] },
+                    { val: statusLabel,               align: 'center', color: h.status==='lunas'?[22,163,74]:(isOverdue?[220,38,38]:(h.status==='cicilan'?[217,119,6]:[147,51,234])) }
+                ];
+
+                cx = margin;
+                cells.forEach(function(cell, ci) {
+                    var col = cols[ci];
+                    if (cell.color) doc.setTextColor(cell.color[0], cell.color[1], cell.color[2]);
+                    else doc.setTextColor(31, 41, 55);
+                    var tx = col.align === 'right' ? cx + col.width - 1 : (col.align === 'center' ? cx + col.width/2 : cx + 1);
+                    var val = cell.maxW ? doc.splitTextToSize(String(cell.val), cell.maxW)[0] : String(cell.val);
+                    doc.text(val, tx, y + 5.2, { align: col.align });
+                    cx += col.width;
+                });
+
+                if (h.jatuhTempo) {
+                    doc.setFontSize(6.5);
+                    doc.setTextColor(150, 150, 150);
+                    doc.text('JT: ' + h.jatuhTempo, margin + cols[0].width + 1, y + rowH - 1.2);
+                }
+
+                y += rowH;
+
+                if (y > 270) {
+                    doc.addPage();
+                    y = 14;
+                    doc.setFillColor(220, 38, 38);
+                    doc.rect(margin, y, w - margin*2, 7, 'F');
+                    doc.setTextColor(255, 255, 255);
+                    doc.setFontSize(7.5);
+                    doc.setFont('helvetica', 'bold');
+                    var cx2 = margin;
+                    cols.forEach(function(col) {
+                        var tx2 = col.align === 'right' ? cx2 + col.width - 1 : (col.align === 'center' ? cx2 + col.width/2 : cx2 + 1);
+                        doc.text(col.header, tx2, y + 4.8, { align: col.align });
+                        cx2 += col.width;
+                    });
+                    y += 7;
+                }
+            });
+
+            // ── Footer total ──
+            doc.setFillColor(220, 38, 38);
+            doc.rect(margin, y, w - margin*2, 8, 'F');
+            doc.setTextColor(255, 255, 255);
+            doc.setFontSize(8);
+            doc.setFont('helvetica', 'bold');
+            var totCx = margin;
+            [cols[0].width+cols[1].width+cols[2].width, cols[3].width, cols[4].width, cols[5].width, cols[6].width].forEach(function(cw, i) {
+                if (i === 0) { doc.text('TOTAL (' + pelanggan.length + ' pelanggan)', totCx + 1, y + 5.2); }
+                else if (i === 1) { doc.text(formatRp(totalHutang), totCx + cw - 1, y + 5.2, { align:'right' }); }
+                else if (i === 2) { doc.text(formatRp(totalBayar),  totCx + cw - 1, y + 5.2, { align:'right' }); }
+                else if (i === 3) { doc.text(formatRp(totalSisa),   totCx + cw - 1, y + 5.2, { align:'right' }); }
+                totCx += cw;
+            });
+
+            // ── Page numbers ──
+            var pageCount = doc.internal.getNumberOfPages();
+            for (var p = 1; p <= pageCount; p++) {
+                doc.setPage(p);
+                doc.setFontSize(7);
+                doc.setFont('helvetica', 'normal');
+                doc.setTextColor(156, 163, 175);
+                doc.text('Hal ' + p + ' dari ' + pageCount, w - margin, 292, { align:'right' });
+                doc.text(namaToko + ' — Laporan Piutang Pelanggan', margin, 292);
+            }
+
+            var fileName = 'Piutang_Pelanggan_' + namaToko.replace(/\s/g,'_') + '_' + now.toISOString().slice(0,10) + '.pdf';
             doc.save(fileName);
         }
 
