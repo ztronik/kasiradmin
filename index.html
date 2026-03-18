@@ -4483,15 +4483,12 @@
                 return !q || r.name.toLowerCase().includes(q) || (r.deskripsi && r.deskripsi.toLowerCase().includes(q));
             });
             var sortKey = state.rewardSort || 'default';
-            if (sortKey !== 'default') {
-                rewardFiltered = rewardFiltered.slice().sort(function(a, b) {
-                    if (sortKey === 'name_asc')  return a.name.localeCompare(b.name, 'id');
-                    if (sortKey === 'name_desc') return b.name.localeCompare(a.name, 'id');
-                    if (sortKey === 'poin_asc')  return (a.poinDibutuhkan||0) - (b.poinDibutuhkan||0);
-                    if (sortKey === 'poin_desc') return (b.poinDibutuhkan||0) - (a.poinDibutuhkan||0);
-                    return 0;
-                });
-            }
+            rewardFiltered = rewardFiltered.slice().sort(function(a, b) {
+                if (sortKey === 'name_desc') return b.name.localeCompare(a.name, 'id');
+                if (sortKey === 'poin_asc')  return (a.poinDibutuhkan||0) - (b.poinDibutuhkan||0);
+                if (sortKey === 'poin_desc') return (b.poinDibutuhkan||0) - (a.poinDibutuhkan||0);
+                return a.name.localeCompare(b.name, 'id'); // default & name_asc
+            });
             var rwdTotal = Math.max(1, Math.ceil(rewardFiltered.length / rwdPP));
             if (state.rewardListPage > rwdTotal) state.rewardListPage = rwdTotal;
             var rwdStart = (state.rewardListPage-1)*rwdPP;
@@ -4529,7 +4526,7 @@
             var custFiltered = rewardData.customers.filter(function(c) {
                 var q = (state.custPoinSearch || '').toLowerCase().trim();
                 return !q || c.name.toLowerCase().includes(q) || (c.id && c.id.toLowerCase().includes(q));
-            });
+            }).sort(function(a, b) { return (a.id||'').localeCompare(b.id||'', 'id', {numeric:true}); });
             var custTotal = Math.max(1, Math.ceil(custFiltered.length / custPP));
             if (state.custPoinPage > custTotal) state.custPoinPage = custTotal;
             var custStart = (state.custPoinPage - 1) * custPP;
@@ -4617,8 +4614,7 @@
                 + "<div class=\"flex gap-2 mb-2\">"
                 + "<div class=\"relative flex-1\"><input type=\"text\" id=\"reward-search-input\" placeholder=\"Cari nama reward...\" value=\"" + (state.rewardSearch||'') + "\" oninput=\"handleRewardSearch(event)\" class=\"w-full pl-7 pr-3 py-1.5 border border-gray-200 rounded-lg text-xs focus:ring-1 focus:ring-purple-400 focus:outline-none\" /><i class=\"ph ph-magnifying-glass absolute left-2 top-2 text-gray-400 text-xs\"></i></div>"
                 + "<select onchange=\"state.rewardSort=this.value; state.rewardListPage=1; renderRewardListOnly()\" class=\"border border-gray-200 rounded-lg text-xs px-2 py-1.5 text-gray-600 focus:ring-1 focus:ring-purple-400 focus:outline-none bg-white cursor-pointer shrink-0\">"
-                + "<option value=\"default\"" + (state.rewardSort==='default'?' selected':'') + ">Urutan default</option>"
-                + "<option value=\"name_asc\"" + (state.rewardSort==='name_asc'?' selected':'') + ">Nama A \u2192 Z</option>"
+                + "<option value=\"default\"" + (state.rewardSort==='default'?' selected':'') + ">Nama A \u2192 Z</option>"
                 + "<option value=\"name_desc\"" + (state.rewardSort==='name_desc'?' selected':'') + ">Nama Z \u2192 A</option>"
                 + "<option value=\"poin_asc\"" + (state.rewardSort==='poin_asc'?' selected':'') + ">Poin terendah</option>"
                 + "<option value=\"poin_desc\"" + (state.rewardSort==='poin_desc'?' selected':'') + ">Poin terbanyak</option>"
@@ -4680,15 +4676,12 @@
                 return !q || r.name.toLowerCase().includes(q) || (r.deskripsi && r.deskripsi.toLowerCase().includes(q));
             });
             var sortKey = state.rewardSort || 'default';
-            if (sortKey !== 'default') {
-                filtered = filtered.slice().sort(function(a, b) {
-                    if (sortKey === 'name_asc')  return a.name.localeCompare(b.name, 'id');
-                    if (sortKey === 'name_desc') return b.name.localeCompare(a.name, 'id');
-                    if (sortKey === 'poin_asc')  return (a.poinDibutuhkan||0) - (b.poinDibutuhkan||0);
-                    if (sortKey === 'poin_desc') return (b.poinDibutuhkan||0) - (a.poinDibutuhkan||0);
-                    return 0;
-                });
-            }
+            filtered = filtered.slice().sort(function(a, b) {
+                if (sortKey === 'name_desc') return b.name.localeCompare(a.name, 'id');
+                if (sortKey === 'poin_asc')  return (a.poinDibutuhkan||0) - (b.poinDibutuhkan||0);
+                if (sortKey === 'poin_desc') return (b.poinDibutuhkan||0) - (a.poinDibutuhkan||0);
+                return a.name.localeCompare(b.name, 'id'); // default & name_asc
+            });
 
             var rwdPP = 5;
             var rwdTotal = Math.max(1, Math.ceil(filtered.length / rwdPP));
@@ -4761,7 +4754,7 @@
             var q = (state.custPoinSearch || '').toLowerCase().trim();
             var filtered = rewardData.customers.filter(function(c) {
                 return !q || c.name.toLowerCase().includes(q) || (c.id && c.id.toLowerCase().includes(q));
-            });
+            }).sort(function(a, b) { return (a.id||'').localeCompare(b.id||'', 'id', {numeric:true}); });
 
             var custPP = 5;
             var custTotal = Math.max(1, Math.ceil(filtered.length / custPP));
@@ -6428,6 +6421,7 @@
             else if (state.customerSort === 'addr') list.sort(function(a,b){ return (a.address||'').localeCompare(b.address||''); });
             else if (state.customerSort === 'poin_high') list.sort(function(a,b){ return (b.poin||0)-(a.poin||0); });
             else if (state.customerSort === 'akum_high') list.sort(function(a,b){ return (b.poinAkumulasi||0)-(a.poinAkumulasi||0); });
+            else list.sort(function(a,b){ return (a.id||'').localeCompare(b.id||'', 'id', {numeric:true}); });
 
             var itemsPerPage = 10;
             var totalPages = Math.max(1, Math.ceil(list.length / itemsPerPage));
@@ -6519,6 +6513,7 @@
             else if (state.customerSort === 'addr') list.sort((a, b) => (a.address || '').localeCompare(b.address || ''));
             else if (state.customerSort === 'poin_high') list.sort((a, b) => (b.poin||0) - (a.poin||0));
             else if (state.customerSort === 'akum_high') list.sort((a, b) => (b.poinAkumulasi||0) - (a.poinAkumulasi||0));
+            else list.sort((a, b) => (a.id||'').localeCompare(b.id||'', 'id', {numeric:true}));
 
             const totalPages = Math.max(1, Math.ceil(list.length / itemsPerPage));
             if (state.customerPage > totalPages) state.customerPage = totalPages;
