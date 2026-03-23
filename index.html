@@ -7364,22 +7364,32 @@
                 setTimeout(function() {
                 if (overlay) overlay.style.display = 'none';
                 var selesai = Date.now();
-                var omzetShift = state.salesHistory.filter(function(s) {
-                    var t = new Date(s.date).getTime();
-                    return t >= clerekState.shiftMulai && t <= selesai;
-                }).reduce(function(sum, s) { return sum + s.total; }, 0);
-                var kasAkhir = clerekState.kasAkhir || 0;
+                // Hitung breakdown omzet per metode untuk shift ini
+                var bdShift      = hitungOmzetPerMetode(clerekState.shiftMulai, selesai);
+                var omzetTunai   = hitungOmzetMasukLaci(bdShift);   // hanya tunai (masuk laci)
+                var omzetTotal   = bdShift.total;                    // total semua metode (untuk laporan)
+                var mutasiShiftVal = hitungMutasiKasShift(clerekState.shiftId); // net mutasi kas manual
+                var kasAkhir     = clerekState.kasAkhir || 0;
+                var kasAkhirEstimasi = clerekState.kasAwal + omzetTunai + mutasiShiftVal;
+                var selisihKas   = kasAkhir - kasAkhirEstimasi;
                 if (GAS_URL && clerekState.shiftId) {
                     gasPost({ action: 'akhiriShift',
                         idShift: clerekState.shiftId,
-                        kasAkhir: kasAkhir, omzet: omzetShift
+                        kasAkhir: kasAkhir,
+                        omzet: omzetTotal,
+                        omzetTunai: omzetTunai,
+                        mutasiKas: mutasiShiftVal
                     }).then(function(res){
                         var rec = {
                             id: clerekState.shiftId,
                             kasir: currentUser ? currentUser.nama : '-',
                             mulai: clerekState.shiftMulai, selesai: selesai,
                             kasAwal: clerekState.kasAwal, kasAkhir: kasAkhir,
-                            omzet: omzetShift, status: 'selesai'
+                            omzet: omzetTotal,        // total semua metode (untuk info)
+                            omzetTunai: omzetTunai,   // tunai saja (untuk perhitungan selisih)
+                            mutasiKas: mutasiShiftVal, // net mutasi kas manual shift ini
+                            omzetBreakdown: bdShift,   // breakdown per metode
+                            status: 'selesai'
                         };
                         clerekState.riwayatShift.unshift(rec);
                         clerekState.shiftSelesai = selesai;
@@ -7394,6 +7404,18 @@
                         renderContent();
                     }).catch(function(){ showAlert('Gagal','Tidak dapat terhubung ke server.','error'); });
                 } else {
+                    var rec = {
+                        id: clerekState.shiftId,
+                        kasir: currentUser ? currentUser.nama : '-',
+                        mulai: clerekState.shiftMulai, selesai: selesai,
+                        kasAwal: clerekState.kasAwal, kasAkhir: kasAkhir,
+                        omzet: omzetTotal,
+                        omzetTunai: omzetTunai,
+                        mutasiKas: mutasiShiftVal,
+                        omzetBreakdown: bdShift,
+                        status: 'selesai'
+                    };
+                    clerekState.riwayatShift.unshift(rec);
                     clerekState.shiftSelesai = selesai;
                     if (adminAmbilAlih) { setAdminAmbilAlih(false); }
                     renderSidebarMenu();
@@ -7461,25 +7483,40 @@
         var clerekMutasiKas = [];
 
         function getClerekKasHTML() {
-            var totalMasuk  = clerekMutasiKas.filter(function(m){return m.tipe==='masuk';}).reduce(function(s,m){return s+m.jumlah;},0);
-            var totalKeluar = clerekMutasiKas.filter(function(m){return m.tipe==='keluar';}).reduce(function(s,m){return s+m.jumlah;},0);
+            var shiftAktifId = clerekState.shiftId || null;
+
+            // Hitung saldo: tampilkan per shift aktif jika ada, fallback ke semua
+            var listTampil = shiftAktifId
+                ? clerekMutasiKas.filter(function(m){ return m.idShift === shiftAktifId; })
+                : clerekMutasiKas;
+
+            var totalMasuk  = listTampil.filter(function(m){return m.tipe==='masuk';}).reduce(function(s,m){return s+m.jumlah;},0);
+            var totalKeluar = listTampil.filter(function(m){return m.tipe==='keluar';}).reduce(function(s,m){return s+m.jumlah;},0);
             var saldo = totalMasuk - totalKeluar;
 
-            var listHTML = clerekMutasiKas.length === 0
-                ? `<tr><td colspan="5" class="text-center py-8 text-gray-400 text-sm">Belum ada mutasi kas.</td></tr>`
-                : clerekMutasiKas.slice(0,30).map(function(m, i) {
+            var shiftLabel = shiftAktifId
+                ? '<p class="text-xs text-green-600 font-semibold mb-2"><i class="ph ph-funnel mr-1"></i>Menampilkan mutasi shift aktif saja</p>'
+                : '<p class="text-xs text-gray-400 mb-2">Tidak ada shift aktif — menampilkan semua mutasi</p>';
+
+            var listHTML = listTampil.length === 0
+                ? `<tr><td colspan="5" class="text-center py-8 text-gray-400 text-sm">Belum ada mutasi kas pada shift ini.</td></tr>`
+                : listTampil.slice(0,30).map(function(m, i) {
+                    // Kunci hapus mutasi shift yang sudah selesai (idShift berbeda dari shift aktif)
+                    var isCurrentShift = !m.idShift || m.idShift === shiftAktifId;
+                    var hapusBtn = isCurrentShift
+                        ? `<button onclick="clerekHapusMutasi('${m.id}')" class="text-red-400 hover:text-red-600 text-xs"><i class="ph ph-trash"></i></button>`
+                        : `<span class="text-gray-300 text-xs" title="Mutasi shift lama terkunci"><i class="ph ph-lock"></i></span>`;
                     return `<tr class="border-b border-gray-50 hover:bg-gray-50">
                         <td class="py-2.5 px-3 text-xs text-gray-500">${new Date(m.waktu).toLocaleString('id-ID',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</td>
                         <td class="py-2.5 px-3"><span class="text-xs px-2 py-0.5 rounded-full font-semibold ${m.tipe==='masuk'?'bg-green-100 text-green-700':'bg-red-100 text-red-600'}">${m.tipe==='masuk'?'Masuk':'Keluar'}</span></td>
                         <td class="py-2.5 px-3 text-sm font-semibold ${m.tipe==='masuk'?'text-green-700':'text-red-600'}">${formatRp(m.jumlah)}</td>
                         <td class="py-2.5 px-3 text-sm text-gray-700">${m.keterangan||'-'}</td>
-                        <td class="py-2.5 px-3 text-center">
-                            <button onclick="clerekHapusMutasi(${i})" class="text-red-400 hover:text-red-600 text-xs"><i class="ph ph-trash"></i></button>
-                        </td>
+                        <td class="py-2.5 px-3 text-center">${hapusBtn}</td>
                     </tr>`;
                 }).join('');
 
             return `<div class="space-y-4">
+                ${shiftLabel}
                 <div class="grid grid-cols-3 gap-3">
                     <div class="bg-green-50 border border-green-200 rounded-xl p-4 text-center">
                         <p class="text-xs text-green-600 font-semibold uppercase tracking-wide mb-1">Total Masuk</p>
@@ -7548,9 +7585,16 @@
             showToast('Mutasi kas ditambahkan.', 'success');
         }
 
-        function clerekHapusMutasi(idx) {
+        function clerekHapusMutasi(idOrIdx) {
             showConfirm('Hapus Mutasi','Hapus data mutasi ini?','error', function(){
-                var del = clerekMutasiKas.splice(idx, 1)[0];
+                var del;
+                // Support both id string (baru) dan index number (lama)
+                if (typeof idOrIdx === 'string') {
+                    var pos = clerekMutasiKas.findIndex(function(m){ return m.id === idOrIdx; });
+                    if (pos >= 0) del = clerekMutasiKas.splice(pos, 1)[0];
+                } else {
+                    del = clerekMutasiKas.splice(idOrIdx, 1)[0];
+                }
                 if (GAS_URL && del && del.id) gasPost({ action: 'deleteMutasiKas', id: del.id }).catch(function(){});
                 var bod = document.getElementById('clerek-body');
                 if (bod) bod.innerHTML = getClerekKasHTML();
@@ -7584,12 +7628,38 @@
             var listHTML = total === 0
                 ? '<div class="text-center py-10 text-gray-400 text-sm">Belum ada riwayat clerek.</div>'
                 : pageItems.map(function(r, i) {
-                    var globalIdx = start + i;
-                    var dur = Math.floor((r.selesai - r.mulai) / 60000);
-                    var selisih = r.kasAkhir - (r.kasAwal + r.omzet);
-                    var tgl = new Date(r.mulai).toLocaleDateString('id-ID',{day:'2-digit',month:'long',year:'numeric'});
+                    var globalIdx  = start + i;
+                    var dur        = Math.floor((r.selesai - r.mulai) / 60000);
+                    // Gunakan omzetTunai jika tersedia (data baru), fallback ke omzet lama
+                    var omzetTunai  = (r.omzetTunai !== undefined) ? r.omzetTunai : r.omzet;
+                    var mutasiKas   = r.mutasiKas || 0;
+                    var kasAkhirEstimasi = r.kasAwal + omzetTunai + mutasiKas;
+                    var selisih     = (r.kasAkhir || 0) - kasAkhirEstimasi;
+                    var tgl        = new Date(r.mulai).toLocaleDateString('id-ID',{day:'2-digit',month:'long',year:'numeric'});
                     var jamMulai   = new Date(r.mulai).toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit'});
                     var jamSelesai = new Date(r.selesai).toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit'});
+
+                    // Baris mutasi kas (tampilkan jika ada)
+                    var mutasiBaris = mutasiKas !== 0
+                        ? '<div class="bg-yellow-50 rounded-lg p-2"><p class="text-yellow-600 mb-0.5">Mutasi Kas</p><p class="font-semibold ' + (mutasiKas>=0?'text-yellow-700':'text-red-600') + '">' + (mutasiKas>=0?'+':'') + formatRp(mutasiKas) + '</p></div>'
+                        : '';
+
+                    // Baris breakdown non-tunai (jika ada data breakdown)
+                    var bdInfo = '';
+                    if (r.omzetBreakdown) {
+                        var bd = r.omzetBreakdown;
+                        var nonTunai = (bd.Kartu||0) + (bd.QRIS||0) + (bd['E-Wallet']||0) + (bd.Hutang||0);
+                        if (nonTunai > 0) {
+                            bdInfo = '<div class="col-span-3 mt-1 p-2 bg-gray-50 rounded-lg text-xs text-gray-500">'
+                                + '<span class="font-semibold text-gray-600">Omzet non-tunai (tidak masuk laci): </span>'
+                                + (bd.Kartu ? 'Kartu '+formatRp(bd.Kartu)+' ' : '')
+                                + (bd.QRIS  ? 'QRIS '+formatRp(bd.QRIS)+' ' : '')
+                                + (bd['E-Wallet'] ? 'E-Wallet '+formatRp(bd['E-Wallet'])+' ' : '')
+                                + (bd.Hutang ? 'Hutang '+formatRp(bd.Hutang) : '')
+                                + '</div>';
+                        }
+                    }
+
                     return '<div class="bg-white rounded-xl border border-gray-100 p-4 shadow-sm">'
                         + '<div class="flex justify-between items-start mb-3">'
                         +   '<div>'
@@ -7607,11 +7677,14 @@
                         + '<div class="grid grid-cols-3 gap-2 text-center text-xs">'
                         +   '<div class="bg-gray-50 rounded-lg p-2"><p class="text-gray-400 mb-0.5">Kas Awal</p><p class="font-semibold text-gray-700">' + formatRp(r.kasAwal) + '</p></div>'
                         +   '<div class="bg-gray-50 rounded-lg p-2"><p class="text-gray-400 mb-0.5">Kas Akhir</p><p class="font-semibold text-gray-700">' + formatRp(r.kasAkhir||0) + '</p></div>'
-                        +   '<div class="bg-green-50 rounded-lg p-2"><p class="text-green-500 mb-0.5">Omzet</p><p class="font-bold text-green-700">' + formatRp(r.omzet) + '</p></div>'
-                        +   '<div class="' + (selisih>=0?'bg-green-50':'bg-red-50') + ' rounded-lg p-2 col-span-3">'
+                        +   '<div class="bg-green-50 rounded-lg p-2"><p class="text-green-500 mb-0.5">Tunai Masuk</p><p class="font-bold text-green-700">' + formatRp(omzetTunai) + '</p></div>'
+                        +   mutasiBaris
+                        +   '<div class="' + (selisih>=0?'bg-green-50':'bg-red-50') + ' rounded-lg p-2 ' + (mutasiKas!==0?'col-span-2':'col-span-3') + '">'
                         +     '<p class="' + (selisih>=0?'text-green-500':'text-red-400') + ' mb-0.5">Selisih Kas</p>'
                         +     '<p class="font-bold ' + (selisih>=0?'text-green-700':'text-red-600') + '">' + (selisih>=0?'+':'') + formatRp(selisih) + '</p>'
+                        +     '<p class="text-gray-400 mt-0.5" style="font-size:10px;">Estimasi: ' + formatRp(kasAkhirEstimasi) + '</p>'
                         +   '</div>'
+                        +   bdInfo
                         + '</div>'
                         + '</div>';
                 }).join('');
@@ -7670,7 +7743,11 @@
             var tglMulai  = new Date(r.mulai).toLocaleDateString('id-ID', {day:'2-digit',month:'long',year:'numeric'});
             var jamMulai  = new Date(r.mulai).toLocaleTimeString('id-ID', {hour:'2-digit',minute:'2-digit'});
             var jamSelesai = new Date(r.selesai).toLocaleTimeString('id-ID', {hour:'2-digit',minute:'2-digit'});
-            var selisih   = r.kasAkhir - (r.kasAwal + r.omzet);
+            // Gunakan omzetTunai (tunai masuk laci) untuk hitung selisih kas fisik
+            var omzetTunaiPdf    = (r.omzetTunai !== undefined) ? r.omzetTunai : r.omzet;
+            var mutasiKasPdf     = r.mutasiKas || 0;
+            var kasAkhirEstimasi = r.kasAwal + omzetTunaiPdf + mutasiKasPdf;
+            var selisih          = (r.kasAkhir || 0) - kasAkhirEstimasi;
 
             // Header toko
             doc.setFontSize(13); doc.setFont(undefined, 'bold'); doc.setTextColor(20);
@@ -7710,10 +7787,14 @@
             y += 6;
 
             var kasRows = [
-                ['Kas Awal', formatRp(r.kasAwal)],
-                ['Omzet Shift', formatRp(r.omzet)],
-                ['Kas Akhir (Aktual)', formatRp(r.kasAkhir || 0)],
+                ['Kas Awal (Modal)', formatRp(r.kasAwal)],
+                ['+ Tunai Masuk Laci', formatRp(omzetTunaiPdf)],
             ];
+            if (mutasiKasPdf !== 0) {
+                kasRows.push([(mutasiKasPdf >= 0 ? '+ Mutasi Kas Masuk' : '- Mutasi Kas Keluar'), formatRp(Math.abs(mutasiKasPdf))]);
+            }
+            kasRows.push(['= Estimasi Kas Akhir', formatRp(kasAkhirEstimasi)]);
+            kasRows.push(['Kas Akhir Aktual (di laci)', formatRp(r.kasAkhir || 0)]);
             kasRows.forEach(function(kr) {
                 doc.setFontSize(9); doc.setFont(undefined, 'normal'); doc.setTextColor(80);
                 doc.text(kr[0], lm + 4, y);
@@ -7733,7 +7814,135 @@
             doc.text((selisih >= 0 ? '+' : '') + formatRp(selisih), pageW - rm, y, { align: 'right' });
             y += 10;
 
-            // Footer
+            // ── SECTION: Omzet per Metode Bayar ──────────────────
+            doc.setDrawColor(200); doc.setLineWidth(0.2);
+            doc.line(lm, y, pageW - rm, y);
+            y += 6;
+
+            doc.setFontSize(10); doc.setFont(undefined, 'bold'); doc.setTextColor(20);
+            doc.text('Omzet per Metode Bayar', lm, y);
+            y += 2;
+            doc.setFontSize(8); doc.setFont(undefined, 'normal'); doc.setTextColor(120);
+            doc.text('Rincian penerimaan berdasarkan metode pembayaran selama shift', lm, y + 4);
+            y += 9;
+
+            var omzetTotalPdf = r.omzet || 0;
+
+            // Gunakan breakdown tersimpan jika ada; jika tidak (shift lama), rebuild dari salesHistory
+            var bd = r.omzetBreakdown;
+            if (!bd) {
+                bd = { Tunai: 0, Kartu: 0, QRIS: 0, 'E-Wallet': 0, Hutang: 0, total: 0 };
+                state.salesHistory.filter(function(s) {
+                    var t = new Date(s.date).getTime();
+                    return t >= r.mulai && t <= r.selesai;
+                }).forEach(function(s) {
+                    var m = s.method || s.paymentMethod || 'Tunai';
+                    if (bd[m] !== undefined) bd[m] += s.total; else bd['Tunai'] += s.total;
+                    bd.total += s.total;
+                });
+                // Sinkronkan omzetTunai jika belum tersimpan
+                if (r.omzetTunai === undefined) omzetTunaiPdf = bd.Tunai || 0;
+            }
+
+            // Daftar semua metode — selalu tampilkan semua (nilai 0 tetap muncul sebagai Rp 0)
+            var metodePdfList = [
+                { label: 'Tunai',    nilai: bd.Tunai        || 0, note: 'masuk laci kas',  rgb: [22, 163, 74]  },
+                { label: 'QRIS',     nilai: bd.QRIS         || 0, note: 'non-tunai',        rgb: [124, 58, 237] },
+                { label: 'Kartu',    nilai: bd.Kartu        || 0, note: 'non-tunai',        rgb: [37, 99, 235]  },
+                { label: 'E-Wallet', nilai: bd['E-Wallet']  || 0, note: 'non-tunai',        rgb: [234, 88, 12]  },
+                { label: 'Hutang',   nilai: bd.Hutang       || 0, note: 'belum diterima',   rgb: [220, 38, 38]  },
+            ];
+
+            // Hitung ulang total dari breakdown agar akurat
+            var totalDariBd = metodePdfList.reduce(function(s, m){ return s + m.nilai; }, 0);
+            if (totalDariBd > 0) omzetTotalPdf = totalDariBd;
+
+            // ── Tabel metode bayar ──
+            var colMetode = lm + 4;
+            var colNilai  = pageW - rm;
+            var colPersen = colNilai - 22;
+            var rowH = 7;
+
+            // Header tabel — background abu
+            doc.setFillColor(240, 240, 240);
+            doc.rect(lm, y - 4, cw, rowH, 'F');
+            doc.setFontSize(8); doc.setFont(undefined, 'bold'); doc.setTextColor(60);
+            doc.text('Metode Pembayaran', colMetode, y);
+            doc.text('%', colPersen, y, { align: 'right' });
+            doc.text('Jumlah', colNilai, y, { align: 'right' });
+            y += rowH;
+
+            // Garis bawah header
+            doc.setDrawColor(200); doc.setLineWidth(0.3);
+            doc.line(lm, y - 1.5, pageW - rm, y - 1.5);
+
+            // Baris tiap metode — tampilkan semua tanpa terkecuali
+            metodePdfList.forEach(function(m) {
+                var persen = omzetTotalPdf > 0 ? ((m.nilai / omzetTotalPdf) * 100).toFixed(1) + '%' : '0%';
+                var isEmpty = m.nilai <= 0;
+
+                // Kotak warna indikator
+                doc.setFillColor(m.rgb[0], m.rgb[1], m.rgb[2]);
+                doc.rect(colMetode, y - 3.5, 3, 4, 'F');
+
+                // Nama metode
+                doc.setFontSize(9.5);
+                doc.setFont(undefined, isEmpty ? 'normal' : 'bold');
+                doc.setTextColor(isEmpty ? 150 : 20);
+                doc.text(m.label, colMetode + 5, y);
+
+                // Keterangan kecil di bawah nama
+                doc.setFontSize(7); doc.setFont(undefined, 'normal');
+                doc.setTextColor(160);
+                doc.text(m.note, colMetode + 5, y + 3.5);
+
+                // Persentase
+                doc.setFontSize(8.5); doc.setFont(undefined, 'normal');
+                doc.setTextColor(isEmpty ? 160 : 80);
+                doc.text(persen, colPersen, y, { align: 'right' });
+
+                // Nilai rupiah — warna metode jika ada nilai, abu jika nol
+                doc.setFontSize(9.5); doc.setFont(undefined, isEmpty ? 'normal' : 'bold');
+                doc.setTextColor(
+                    isEmpty ? 160 : m.rgb[0],
+                    isEmpty ? 160 : m.rgb[1],
+                    isEmpty ? 160 : m.rgb[2]
+                );
+                doc.text(formatRp(m.nilai), colNilai, y, { align: 'right' });
+
+                y += rowH + 2; // beri ruang untuk teks keterangan kecil
+
+                // Garis tipis pemisah baris
+                doc.setDrawColor(230); doc.setLineWidth(0.1);
+                doc.line(lm, y - 1.5, pageW - rm, y - 1.5);
+            });
+
+            // Baris TOTAL
+            y += 1;
+            doc.setDrawColor(22, 163, 74); doc.setLineWidth(0.5);
+            doc.line(lm, y - 1, pageW - rm, y - 1);
+            doc.setFillColor(240, 253, 244);
+            doc.rect(lm, y - 1, cw, 8, 'F');
+            doc.setFontSize(10); doc.setFont(undefined, 'bold'); doc.setTextColor(20);
+            doc.text('TOTAL OMZET', colMetode, y + 4);
+            doc.text('100%', colPersen, y + 4, { align: 'right' });
+            doc.setTextColor(22, 163, 74);
+            doc.text(formatRp(omzetTotalPdf), colNilai, y + 4, { align: 'right' });
+            y += 12;
+
+            // Catatan kaki
+            doc.setFontSize(7.5); doc.setFont(undefined, 'normal');
+            doc.setTextColor(140);
+            doc.text('* Tunai masuk laci kas. QRIS, Kartu, E-Wallet tidak masuk laci.', lm, y);
+            y += 4;
+            if ((bd.Hutang || 0) > 0) {
+                doc.setTextColor(180, 30, 30);
+                doc.text('* Hutang: pembayaran belum diterima / masih piutang kepada toko.', lm, y);
+                y += 4;
+            }
+            y += 3;
+
+            // ── FOOTER ───────────────────────────────────────────
             doc.setDrawColor(200); doc.setLineWidth(0.2);
             doc.line(lm, y, pageW - rm, y);
             y += 5;
