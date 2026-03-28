@@ -523,7 +523,7 @@
             hutangPage: 1,
             hutangTab: 'pelanggan',
             hutangSearch: '',
-            hutangFilterStatus: 'semua',
+            hutangFilterStatus: 'belum',
             hutangSort: 'default',
             // State laporan
             laporanTab: 'transaksi',  // 'transaksi' | 'neraca'
@@ -531,7 +531,9 @@
             laporanFilter: 'semua',  // semua | hari | minggu | bulan | bulan2 | bulan3 | custom
             laporanCustomFrom: '',
             laporanCustomTo: '',
-            laporanSearch: ''
+            laporanSearch: '',
+            keuntunganFilter: '7hari',
+            keuntunganList: []
         };
 
         // --- UTILS ---
@@ -715,6 +717,7 @@
                         };
                     });
                     if (data.penukaranPoin) rewardData.penukaranPoin = data.penukaranPoin;
+                    if (data.keuntunganList) state.keuntunganList = data.keuntunganList;
                     if (data.riwayatShift)  clerekState.riwayatShift = data.riwayatShift;
                     if (data.mutasiKas)     clerekMutasiKas          = data.mutasiKas;
                     if (data.pengaturan) {
@@ -1797,7 +1800,27 @@
 
         function handleDiscountChange(e) {
             state.discountValue = Number(e.target.value) || 0;
-            renderCartFooter();
+            // Hanya update tampilan total/grand total tanpa re-render seluruh footer
+            // agar input tidak kehilangan fokus saat mengetik
+            _updateDiscountDisplay();
+        }
+
+        function _updateDiscountDisplay() {
+            // Update hanya nilai-nilai yang berubah akibat diskon, tanpa rebuild DOM
+            var subtotal = state.cart.reduce(function(s, item) {
+                return s + getItemActivePrice(item) * item.qty;
+            }, 0);
+            var poinDiscount = state.posPoinRedeem ? Math.floor(state.posPoinRedeem / 100) * 1000 : 0;
+            var disc = state.discountType === 'Rp' ? state.discountValue : subtotal * (state.discountValue / 100);
+            var grandTotal = Math.max(0, subtotal - disc - poinDiscount);
+
+            var elSubtotal = document.getElementById('disc-subtotal');
+            var elDisc     = document.getElementById('disc-amount');
+            var elTotal    = document.getElementById('disc-grandtotal');
+            if (elSubtotal) elSubtotal.textContent = formatRp(subtotal);
+            if (elDisc && disc > 0) { elDisc.textContent = '-' + formatRp(disc); elDisc.closest('.disc-row') && (elDisc.closest('.disc-row').style.display = ''); }
+            if (elDisc && disc === 0) { var r = elDisc.closest('.disc-row'); if(r) r.style.display='none'; }
+            if (elTotal) elTotal.textContent = formatRp(grandTotal);
         }
 
         function toggleDiscountType() {
@@ -2815,19 +2838,19 @@
             const summaryHtml = `<div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;flex-shrink:0;">
                 <div style="background:#dcfce7;padding:6px 12px;font-size:12px;font-weight:700;color:#166534;border-bottom:1px solid #bbf7d0;">RINGKASAN BELANJA</div>
                 <div style="padding:10px 12px;font-size:12px;">
-                    <div style="display:flex;justify-content:space-between;margin-bottom:6px;"><span style="color:#6b7280;">Subtotal</span><span style="font-weight:600;">${formatRp(subtotal)}</span></div>
+                    <div style="display:flex;justify-content:space-between;margin-bottom:6px;"><span style="color:#6b7280;">Subtotal</span><span id="disc-subtotal" style="font-weight:600;">${formatRp(subtotal)}</span></div>
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
                         <span style="color:#6b7280;">Diskon Tambahan</span>
                         <div style="display:flex;align-items:center;gap:3px;border:1px solid #e2e8f0;border-radius:5px;padding:2px 6px;background:#f9fafb;">
                             <button onclick="toggleDiscountType()" style="font-size:10px;font-weight:700;color:#374151;background:#fff;border:1px solid #e2e8f0;border-radius:3px;padding:1px 5px;cursor:pointer;white-space:nowrap;">${state.discountType}</button>
-                            <input type="number" min="0" value="${state.discountValue||''}" onchange="handleDiscountChange(event)" onkeyup="handleDiscountChange(event)" placeholder="0"
+                            <input type="number" min="0" value="${state.discountValue||''}" oninput="handleDiscountChange(event)" onblur="renderCartFooter()" placeholder="0"
                                 style="width:55px;text-align:right;border:none;outline:none;font-size:12px;font-weight:600;background:transparent;" />
                         </div>
                     </div>
                     ${poinDiscount>0?`<div style="display:flex;justify-content:space-between;margin-bottom:6px;color:#16a34a;font-size:11px;"><span>Poin (${state.posPoinRedeem})</span><span>- ${formatRp(poinDiscount)}</span></div>`:''}
                     <div style="display:flex;justify-content:space-between;border-top:2px dashed #bbf7d0;margin-top:4px;padding-top:8px;">
                         <span style="font-size:14px;font-weight:700;color:#111827;">TOTAL</span>
-                        <span style="font-size:16px;font-weight:900;color:#16a34a;">${formatRp(grandTotal)}</span>
+                        <span id="disc-grandtotal" style="font-size:16px;font-weight:900;color:#16a34a;">${formatRp(grandTotal)}</span>
                     </div>
                 </div>
             </div>`;
@@ -4964,11 +4987,12 @@
         function getLaporanHTML() {
             var isAdmin = currentUser && currentUser.role === 'admin';
 
-            // Tab bar — Neraca Modal hanya untuk admin
-            var tabTrxActive   = state.laporanTab !== 'neraca' && state.laporanTab !== 'hutang';
+            // Tab bar — Neraca Modal & Keuntungan hanya untuk admin
+            var tabTrxActive   = state.laporanTab !== 'neraca' && state.laporanTab !== 'hutang' && state.laporanTab !== 'keuntungan';
             var tabNrcActive   = state.laporanTab === 'neraca';
             var tabHtgActive   = state.laporanTab === 'hutang';
-            var tabBar = '<div class="flex gap-2 mb-4">'
+            var tabKntActive   = state.laporanTab === 'keuntungan';
+            var tabBar = '<div class="flex gap-2 mb-4" style="flex-wrap:wrap;">'
                 + '<button onclick="state.laporanTab=\'transaksi\'; state.laporanPage=1; renderContent()" style="padding:8px 16px;font-size:13px;font-weight:600;border-radius:8px;border:1px solid ' + (tabTrxActive ? '#16a34a' : '#e5e7eb') + ';background:' + (tabTrxActive ? '#16a34a' : '#fff') + ';color:' + (tabTrxActive ? '#fff' : '#4b5563') + ';cursor:pointer;">'
                 + '<i class="ph ph-receipt" style="margin-right:6px;"></i>Riwayat Transaksi'
                 + '</button>';
@@ -4982,6 +5006,9 @@
                 tabBar += '<button onclick="state.laporanTab=\'neraca\'; renderContent()" style="padding:8px 16px;font-size:13px;font-weight:600;border-radius:8px;border:1px solid ' + (tabNrcActive ? '#4f46e5' : '#e5e7eb') + ';background:' + (tabNrcActive ? '#4f46e5' : '#fff') + ';color:' + (tabNrcActive ? '#fff' : '#4b5563') + ';cursor:pointer;">'
                     + '<i class="ph ph-scales" style="margin-right:6px;"></i>Neraca Modal'
                     + '</button>';
+                tabBar += '<button onclick="state.laporanTab=\'keuntungan\'; renderContent()" style="padding:8px 16px;font-size:13px;font-weight:600;border-radius:8px;border:1px solid ' + (tabKntActive ? '#b45309' : '#e5e7eb') + ';background:' + (tabKntActive ? '#b45309' : '#fff') + ';color:' + (tabKntActive ? '#fff' : '#4b5563') + ';cursor:pointer;">'
+                    + '<i class="ph ph-trend-up" style="margin-right:6px;"></i>Keuntungan'
+                    + '</button>';
             }
             tabBar += '</div>';
 
@@ -4993,6 +5020,11 @@
             // Route ke neraca tab
             if (isAdmin && tabNrcActive) {
                 return '<div class="space-y-4">' + tabBar + getNeracaModalHTML() + '</div>';
+            }
+
+            // Route ke keuntungan tab (admin only)
+            if (isAdmin && tabKntActive) {
+                return '<div class="space-y-4">' + tabBar + getKeuntunganHTML() + '</div>';
             }
 
             const now = new Date();
@@ -5687,6 +5719,172 @@
                 doc.text(namaTokoStruk + ' | Neraca Modal | Hal ' + i + '/' + pageCount, 14, 290);
             }
             doc.save('Neraca_Modal_' + namaTokoStruk.replace(/\s/g,'_') + '_' + now.toLocaleDateString('id-ID').replace(/\//g,'-') + '.pdf');
+        }
+
+
+        // ── MENU KEUNTUNGAN BERSIH (admin only) ─────────────────────────────
+        function getKeuntunganHTML() {
+            var filterKnt = state.keuntunganFilter || '7hari';
+
+            var now    = new Date();
+            var cutoff = new Date(now);
+            if (filterKnt === '7hari') {
+                cutoff.setDate(now.getDate() - 7);
+            } else {
+                cutoff.setMonth(now.getMonth() - 1);
+            }
+            cutoff.setHours(0,0,0,0);
+
+            // Batasi maksimal 3 bulan ke belakang
+            var maxCutoff = new Date(now);
+            maxCutoff.setMonth(now.getMonth() - 3);
+            maxCutoff.setHours(0,0,0,0);
+
+            var effectiveCutoff = cutoff > maxCutoff ? cutoff : maxCutoff;
+
+            // ── Hitung keuntungan dari salesHistory (data live) ──
+            var perHari = {};
+            (state.salesHistory || []).forEach(function(s) {
+                if (s.refunded) return;
+                var tgl = new Date(s.date);
+                if (isNaN(tgl)) return;
+                tgl.setHours(0,0,0,0);
+                if (tgl < effectiveCutoff) return;
+
+                var key = tgl.toISOString().slice(0,10);
+                if (!perHari[key]) perHari[key] = { omzet:0, modal:0, keuntungan:0, jumlahTrx:0 };
+
+                var omzet = (s.total || 0);
+                var modal = 0;
+                if (s.items && s.items.length) {
+                    s.items.forEach(function(it) {
+                        var produk = (state.products || []).find(function(p){ return p.id === it.id; });
+                        var hModal = produk ? (produk.Modal || produk.modal || 0) : 0;
+                        modal += hModal * (it.qty || 1);
+                    });
+                }
+                perHari[key].omzet      += omzet;
+                perHari[key].modal      += modal;
+                perHari[key].keuntungan += (omzet - modal);
+                perHari[key].jumlahTrx  += 1;
+            });
+
+            // Tambahkan data dari keuntunganList (GAS) untuk hari yang tidak ada di salesHistory
+            (state.keuntunganList || []).forEach(function(k) {
+                var tgl = new Date(k.tanggal);
+                if (isNaN(tgl)) return;
+                tgl.setHours(0,0,0,0);
+                if (tgl < effectiveCutoff) return;
+                var key = tgl.toISOString().slice(0,10);
+                if (!perHari[key]) {
+                    perHari[key] = {
+                        omzet:      k.omzet      || 0,
+                        modal:      k.modal      || 0,
+                        keuntungan: k.keuntungan || 0,
+                        jumlahTrx:  k.jumlahTrx  || 0
+                    };
+                }
+            });
+
+            // Sort descending
+            var keys = Object.keys(perHari).sort(function(a,b){ return b > a ? 1 : -1; });
+
+            var totalOmzet = 0, totalModal = 0, totalKeuntungan = 0, totalTrx = 0;
+            keys.forEach(function(k){
+                totalOmzet      += perHari[k].omzet;
+                totalModal      += perHari[k].modal;
+                totalKeuntungan += perHari[k].keuntungan;
+                totalTrx        += perHari[k].jumlahTrx;
+            });
+
+            var filterLabel = filterKnt === '7hari' ? '7 Hari Terakhir' : '1 Bulan Terakhir';
+
+            var html = ''
+                + '<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:12px 16px;margin-bottom:16px;font-size:12px;color:#92400e;">'
+                + '<i class="ph ph-info" style="margin-right:6px;"></i>'
+                + 'Riwayat keuntungan tersimpan maksimal <b>3 bulan</b>. Data lebih dari 3 bulan dihapus otomatis setiap hari. Menu ini hanya dapat dilihat oleh <b>Admin</b>.'
+                + '</div>'
+
+                // Filter tombol
+                + '<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;">'
+                + '<button onclick="state.keuntunganFilter=\'7hari\'; renderContent()" style="padding:7px 18px;font-size:13px;font-weight:600;border-radius:8px;border:1px solid '+(filterKnt==='7hari'?'#b45309':'#e5e7eb')+';background:'+(filterKnt==='7hari'?'#b45309':'#fff')+';color:'+(filterKnt==='7hari'?'#fff':'#4b5563')+';cursor:pointer;">'
+                + '<i class="ph ph-calendar-blank" style="margin-right:5px;"></i>7 Hari Terakhir</button>'
+                + '<button onclick="state.keuntunganFilter=\'1bulan\'; renderContent()" style="padding:7px 18px;font-size:13px;font-weight:600;border-radius:8px;border:1px solid '+(filterKnt==='1bulan'?'#b45309':'#e5e7eb')+';background:'+(filterKnt==='1bulan'?'#b45309':'#fff')+';color:'+(filterKnt==='1bulan'?'#fff':'#4b5563')+';cursor:pointer;">'
+                + '<i class="ph ph-calendar" style="margin-right:5px;"></i>1 Bulan Terakhir</button>'
+                + '</div>'
+
+                // Summary cards
+                + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:20px;">'
+                + _kntCard('Keuntungan Bersih', formatRp(totalKeuntungan), 'ph-trend-up', '#b45309', '#fffbeb', '#fde68a')
+                + _kntCard('Total Omzet', formatRp(totalOmzet), 'ph-money', '#16a34a', '#f0fdf4', '#bbf7d0')
+                + _kntCard('Total Modal', formatRp(totalModal), 'ph-package', '#6b7280', '#f9fafb', '#e5e7eb')
+                + _kntCard('Transaksi', totalTrx + ' trx', 'ph-receipt', '#2563eb', '#eff6ff', '#bfdbfe')
+                + '</div>'
+
+                // Tabel harian
+                + '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;">'
+                + '<div style="background:#fef3c7;padding:10px 14px;font-size:13px;font-weight:700;color:#92400e;border-bottom:1px solid #fde68a;">'
+                + '<i class="ph ph-chart-bar" style="margin-right:6px;"></i>Keuntungan Bersih Harian — ' + filterLabel
+                + '</div>';
+
+            if (keys.length === 0) {
+                html += '<div style="text-align:center;padding:40px;color:#9ca3af;font-size:13px;">'
+                    + '<i class="ph ph-chart-line-down" style="font-size:40px;display:block;margin:0 auto 10px;"></i>'
+                    + 'Belum ada data transaksi dalam periode ini.'
+                    + '</div>';
+            } else {
+                html += '<div style="overflow-x:auto;">'
+                    + '<table style="width:100%;border-collapse:collapse;font-size:13px;">'
+                    + '<thead><tr style="background:#fffbeb;">'
+                    + '<th style="padding:9px 12px;text-align:left;border-bottom:1px solid #fde68a;font-weight:700;color:#92400e;">Tanggal</th>'
+                    + '<th style="padding:9px 12px;text-align:right;border-bottom:1px solid #fde68a;font-weight:700;color:#92400e;">Omzet</th>'
+                    + '<th style="padding:9px 12px;text-align:right;border-bottom:1px solid #fde68a;font-weight:700;color:#92400e;">Modal</th>'
+                    + '<th style="padding:9px 12px;text-align:right;border-bottom:1px solid #fde68a;font-weight:700;color:#92400e;">Keuntungan</th>'
+                    + '<th style="padding:9px 12px;text-align:center;border-bottom:1px solid #fde68a;font-weight:700;color:#92400e;">Trx</th>'
+                    + '</tr></thead><tbody>';
+
+                keys.forEach(function(k, idx) {
+                    var d      = perHari[k];
+                    var tgl    = new Date(k);
+                    var label  = tgl.toLocaleDateString('id-ID', { weekday:'short', day:'2-digit', month:'short', year:'numeric' });
+                    var isToday = k === new Date().toISOString().slice(0,10);
+                    var rowBg   = isToday ? '#fffde7' : (idx % 2 === 0 ? '#fff' : '#fafafa');
+                    var kntColor = d.keuntungan >= 0 ? '#16a34a' : '#dc2626';
+
+                    html += '<tr style="background:'+rowBg+';border-bottom:1px solid #f3f4f6;">'
+                        + '<td style="padding:9px 12px;">'+(isToday?'<span style="font-weight:700;color:#b45309;">★ </span>':'')+label+'</td>'
+                        + '<td style="padding:9px 12px;text-align:right;color:#374151;">'+formatRp(d.omzet)+'</td>'
+                        + '<td style="padding:9px 12px;text-align:right;color:#6b7280;">'+formatRp(d.modal)+'</td>'
+                        + '<td style="padding:9px 12px;text-align:right;font-weight:700;color:'+kntColor+';">'+formatRp(d.keuntungan)+'</td>'
+                        + '<td style="padding:9px 12px;text-align:center;color:#6b7280;">'+d.jumlahTrx+'</td>'
+                        + '</tr>';
+                });
+
+                // Baris total
+                html += '<tr style="background:#fef3c7;border-top:2px solid #fde68a;font-weight:700;">'
+                    + '<td style="padding:9px 12px;color:#92400e;">TOTAL '+filterLabel.toUpperCase()+'</td>'
+                    + '<td style="padding:9px 12px;text-align:right;color:#16a34a;">'+formatRp(totalOmzet)+'</td>'
+                    + '<td style="padding:9px 12px;text-align:right;color:#6b7280;">'+formatRp(totalModal)+'</td>'
+                    + '<td style="padding:9px 12px;text-align:right;color:#b45309;">'+formatRp(totalKeuntungan)+'</td>'
+                    + '<td style="padding:9px 12px;text-align:center;color:#92400e;">'+totalTrx+'</td>'
+                    + '</tr>';
+
+                html += '</tbody></table></div>';
+            }
+
+            html += '</div>';
+            return html;
+        }
+
+        function _kntCard(label, value, icon, color, bg, border) {
+            return '<div style="background:'+bg+';border:1px solid '+border+';border-radius:10px;padding:14px 16px;">'
+                + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">'
+                + '<div style="width:32px;height:32px;border-radius:50%;background:'+border+';display:flex;align-items:center;justify-content:center;">'
+                + '<i class="ph '+icon+'" style="font-size:16px;color:'+color+';"></i></div>'
+                + '<span style="font-size:12px;color:#6b7280;font-weight:600;">'+label+'</span>'
+                + '</div>'
+                + '<div style="font-size:18px;font-weight:900;color:'+color+';">'+value+'</div>'
+                + '</div>';
         }
 
         function handleLaporanSearch(e) {
@@ -8547,13 +8745,18 @@
 
             // Konfirmasi pelunasan
             showConfirm('Lunasi Hutang?',
-                'Lunasi hutang ' + h.nama + ' sebesar ' + formatRp(sisa) + '?\\n\\n'
-                + 'Status akan berubah menjadi \"Lunas\" dan riwayat pembayaran akan tercatat.',
+                'Lunasi hutang ' + h.nama + ' sebesar ' + formatRp(sisa) + '?\n\n'
+                + 'Status akan berubah menjadi "Lunas" dan riwayat pembayaran akan tercatat.',
                 'warning',
                 function() {
                     // Proses pelunasan
                     var now = new Date();
-                    var tglStr = Utilities.formatDate(now, Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm');
+                    var dd = String(now.getDate()).padStart(2,'0');
+                    var mm = String(now.getMonth()+1).padStart(2,'0');
+                    var yyyy = now.getFullYear();
+                    var hh = String(now.getHours()).padStart(2,'0');
+                    var mi = String(now.getMinutes()).padStart(2,'0');
+                    var tglStr = dd+'/'+mm+'/'+yyyy+' '+hh+':'+mi;
 
                     // Update riwayat pembayaran
                     if (!h.riwayatBayar) h.riwayatBayar = [];
@@ -8568,19 +8771,61 @@
                     h.sudahDibayar = h.jumlah;
                     h.status = 'lunas';
 
-                    // Sync ke GAS
+                    // Catat ke mutasi kas
+                    var mutasiTipe = h.tipe === 'pelanggan' ? 'masuk' : 'keluar';
+                    var mutasiKet  = (h.tipe==='pelanggan'?'Pembayaran Piutang (Lunas): ':'Bayar Hutang Supplier (Lunas): ') + h.nama;
+                    var mutasi = { id:'MUT'+Date.now(), tipe:mutasiTipe, jumlah:sisa,
+                        keterangan:mutasiKet, waktu:Date.now(), idShift:clerekState.shiftId||'' };
+                    clerekMutasiKas.unshift(mutasi);
+                    if (GAS_URL) gasPost({ action:'saveMutasiKas', mutasi:mutasi }).catch(function(){});
+
+                    // Sync hutang ke GAS
                     if (GAS_URL) {
                         gasPost({
                             action: 'updateHutang',
-                            id: h.id,
-                            hutangRecord: h
-                        }).catch(() => {});
+                            hutang: Object.assign({}, h, { riwayatBayar: JSON.stringify(h.riwayatBayar) })
+                        }).catch(function(){});
+                    }
+
+                    // ── Tambah poin yang tertunda jika semua hutang pelanggan lunas ──
+                    if (h.tipe === 'pelanggan' && h.idPelanggan) {
+                        var masihAdaHutang = hutangPiutangList.some(function(hx){
+                            return hx.id !== h.id && hx.tipe==='pelanggan' && hx.idPelanggan===h.idPelanggan && hx.status!=='lunas';
+                        });
+                        if (!masihAdaHutang) {
+                            // Hitung total poin tertunda dari semua transaksi hutang pelanggan ini
+                            var totalPoinTertunda = 0;
+                            state.salesHistory.forEach(function(s){
+                                if (s.memberId === h.idPelanggan && s.method === 'Hutang' && (s.poinDidapat === 0 || !s.poinDidapat)) {
+                                    // Hitung ulang poin dari transaksi ini berdasarkan total
+                                    var poinTrx = 0;
+                                    if (rewardData.belanjaPoinMin > 0 && rewardData.belanjaPoinDapat > 0) {
+                                        poinTrx = Math.floor(s.total / rewardData.belanjaPoinMin) * rewardData.belanjaPoinDapat;
+                                    }
+                                    totalPoinTertunda += poinTrx;
+                                }
+                            });
+                            if (totalPoinTertunda > 0) {
+                                var cust = state.customers.find(function(c){ return c.id === h.idPelanggan; });
+                                if (cust) {
+                                    cust.poin = (cust.poin || 0) + totalPoinTertunda;
+                                    cust.poinAkumulasi = (cust.poinAkumulasi || 0) + totalPoinTertunda;
+                                    rewardData.customers = state.customers.map(function(c){ return Object.assign({}, c, { tier: getTierInfo(c.poin).name }); });
+                                    if (GAS_URL) gasPost({ action:'updatePoinAfterCheckout', customerId:cust.id, poin:cust.poin, poinAkumulasi:cust.poinAkumulasi, totalBelanja:cust.totalBelanja }).catch(function(){});
+                                    showToast('Semua hutang '+h.nama+' lunas! Poin tertunda sebesar '+totalPoinTertunda+' poin berhasil ditambahkan.', 'success');
+                                } else {
+                                    showToast('Hutang '+h.nama+' lunas!', 'success');
+                                }
+                            } else {
+                                showToast('Hutang '+h.nama+' lunas!', 'success');
+                            }
+                        }
                     }
 
                     renderContent();
                     showAlert('Hutang Terlunas!',
-                        'Hutang ' + h.nama + ' sebesar ' + formatRp(sisa) + ' telah berhasil dilunas.\\n'
-                        + 'Status berubah menjadi \"Lunas\" dan tercatat di riwayat.',
+                        'Hutang ' + h.nama + ' sebesar ' + formatRp(sisa) + ' telah berhasil dilunas.\n'
+                        + 'Status berubah menjadi "Lunas" dan tercatat di riwayat.',
                         'success');
                 }
             );
@@ -8666,7 +8911,31 @@
                     return hx.id !== h.id && hx.tipe==='pelanggan' && hx.idPelanggan===h.idPelanggan && hx.status!=='lunas';
                 });
                 if (!masihAdaHutang) {
-                    showToast('Semua hutang '+h.nama+' lunas. Poin pelanggan akan aktif di transaksi berikutnya.','info');
+                    // Hitung total poin tertunda dari semua transaksi hutang pelanggan ini
+                    var totalPoinTertunda = 0;
+                    state.salesHistory.forEach(function(s){
+                        if (s.memberId === h.idPelanggan && s.method === 'Hutang' && (s.poinDidapat === 0 || !s.poinDidapat)) {
+                            var poinTrx = 0;
+                            if (rewardData.belanjaPoinMin > 0 && rewardData.belanjaPoinDapat > 0) {
+                                poinTrx = Math.floor(s.total / rewardData.belanjaPoinMin) * rewardData.belanjaPoinDapat;
+                            }
+                            totalPoinTertunda += poinTrx;
+                        }
+                    });
+                    if (totalPoinTertunda > 0) {
+                        var custPoin = state.customers.find(function(c){ return c.id === h.idPelanggan; });
+                        if (custPoin) {
+                            custPoin.poin = (custPoin.poin || 0) + totalPoinTertunda;
+                            custPoin.poinAkumulasi = (custPoin.poinAkumulasi || 0) + totalPoinTertunda;
+                            rewardData.customers = state.customers.map(function(c){ return Object.assign({}, c, { tier: getTierInfo(c.poin).name }); });
+                            if (GAS_URL) gasPost({ action:'updatePoinAfterCheckout', customerId:custPoin.id, poin:custPoin.poin, poinAkumulasi:custPoin.poinAkumulasi, totalBelanja:custPoin.totalBelanja }).catch(function(){});
+                            showToast('Semua hutang '+h.nama+' lunas! '+totalPoinTertunda+' poin tertunda berhasil ditambahkan.', 'success');
+                        } else {
+                            showToast('Semua hutang '+h.nama+' lunas. Poin pelanggan akan aktif di transaksi berikutnya.','info');
+                        }
+                    } else {
+                        showToast('Semua hutang '+h.nama+' lunas. Poin pelanggan akan aktif di transaksi berikutnya.','info');
+                    }
                 }
             }
 
