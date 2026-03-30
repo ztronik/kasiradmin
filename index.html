@@ -3653,6 +3653,9 @@
                             <i class="ph ph-clock"></i> Untuk pembersihan otomatis harian, jalankan fungsi <code class="bg-gray-100 px-1 rounded">installTriggerHarian()</code> sekali di Google Apps Script Editor.
                         </p>
                     </div>
+
+                    <!-- Panel Integrasi Verifikasi Non-Tunai -->
+                    ${getIntegrasiSettingsHTML()}
                 </div>
             `;
         }
@@ -7138,7 +7141,277 @@
             kasAwalKonfirmasi: false,
             kasAkhirKonfirmasi: false,
             riwayatShift: [],
+            // Checklist verifikasi non-tunai per shift
+            verifikasiNonTunai: { Kartu: false, QRIS: false, 'E-Wallet': false, Hutang: false },
         };
+
+        // ── HELPER: Toggle centang verifikasi non-tunai ───────────────
+        function clerekToggleVerifikasi(metode) {
+            clerekState.verifikasiNonTunai[metode] = !clerekState.verifikasiNonTunai[metode];
+            var bod = document.getElementById('clerek-body');
+            if (bod && clerekState.tab === 'shift') bod.innerHTML = getClerekShiftHTML();
+        }
+
+        // ══════════════════════════════════════════════════════════════
+        // STRUKTUR INTEGRASI NON-TUNAI — siap pakai saat API tersedia
+        // ══════════════════════════════════════════════════════════════
+        //
+        // Cara menambah integrasi nyata di masa depan:
+        //   1. Isi apiKey / webhookUrl di objek metode yang diinginkan
+        //   2. Implementasikan fungsi fetch di dalam fetchVerifikasiEksternal()
+        //   3. Simpan konfigurasi via gasPost({ action:'saveIntegrasi', ... })
+        //
+        var clerekIntegrations = {
+            'Kartu': {
+                nama:        'Kartu ATM (EDC)',
+                provider:    null,          // contoh: 'BCA EDC', 'Mandiri EDC', dll
+                apiKey:      null,          // API key dari bank / payment gateway
+                webhookUrl:  null,          // URL endpoint laporan settlement
+                enabled:     false,         // aktifkan setelah konfigurasi terisi
+                // Struktur respons yang diharapkan dari API (untuk mapping nanti):
+                // { total: Number, transactions: [{id, amount, time}] }
+            },
+            'QRIS': {
+                nama:        'QRIS',
+                provider:    null,          // contoh: 'GoPay Merchant', 'OVO Business', dll
+                apiKey:      null,
+                webhookUrl:  null,
+                enabled:     false,
+            },
+            'E-Wallet': {
+                nama:        'E-Wallet',
+                provider:    null,          // contoh: 'GoPay', 'OVO', 'Dana'
+                apiKey:      null,
+                webhookUrl:  null,
+                enabled:     false,
+            },
+            'Hutang': {
+                // Hutang tidak menggunakan API eksternal — verifikasi via nota fisik.
+                // Struktur ini tetap disertakan agar konsisten dengan metode lain.
+                nama:        'Hutang / Kasbon',
+                provider:    'Manual (nota fisik)',
+                apiKey:      null,
+                webhookUrl:  null,
+                enabled:     false,
+            },
+        };
+
+        // ── Muat konfigurasi integrasi yang tersimpan (dipanggil dari fetchData) ──
+        function loadIntegrasionsFromData(data) {
+            if (!data || !data.integrasiNonTunai) return;
+            try {
+                var saved = typeof data.integrasiNonTunai === 'string'
+                    ? JSON.parse(data.integrasiNonTunai)
+                    : data.integrasiNonTunai;
+                Object.keys(saved).forEach(function(key) {
+                    if (clerekIntegrations[key]) {
+                        Object.assign(clerekIntegrations[key], saved[key]);
+                    }
+                });
+            } catch(e) {}
+        }
+
+        // ── Simpan konfigurasi integrasi ke spreadsheet ──
+        function saveIntegrasiToGAS() {
+            if (!GAS_URL) return Promise.resolve();
+            // Hanya kirim field yang aman (tidak ada secret di log GAS)
+            var payload = {};
+            Object.keys(clerekIntegrations).forEach(function(key) {
+                var cfg = clerekIntegrations[key];
+                payload[key] = {
+                    provider:   cfg.provider,
+                    apiKey:     cfg.apiKey,
+                    webhookUrl: cfg.webhookUrl,
+                    enabled:    cfg.enabled,
+                };
+            });
+            return gasPost({ action: 'savePengaturan', key: 'integrasi_non_tunai', value: JSON.stringify(payload) });
+        }
+
+        // ── Fungsi utama: coba fetch verifikasi otomatis (stub — siap diisi) ──
+        //
+        // Saat integrasi belum aktif (enabled: false), fungsi ini langsung return null.
+        // Saat nanti diaktifkan, isi logika fetch di dalam blok masing-masing.
+        //
+        async function fetchVerifikasiEksternal(metode, tanggalMulai, tanggalSelesai) {
+            var cfg = clerekIntegrations[metode];
+            if (!cfg || !cfg.enabled || !cfg.apiKey) return null;
+
+            try {
+                // ── KARTU (EDC) ─────────────────────────────────────────────
+                // Contoh endpoint: API settlement EDC dari payment gateway
+                // Uncomment dan sesuaikan saat API siap:
+                //
+                // if (metode === 'Kartu') {
+                //     var res = await fetch(cfg.webhookUrl + '/settlement', {
+                //         method: 'POST',
+                //         headers: { 'Authorization': 'Bearer ' + cfg.apiKey, 'Content-Type': 'application/json' },
+                //         body: JSON.stringify({ from: tanggalMulai, to: tanggalSelesai })
+                //     });
+                //     var json = await res.json();
+                //     return { total: json.total_amount, rawData: json };
+                // }
+
+                // ── QRIS ────────────────────────────────────────────────────
+                // if (metode === 'QRIS') {
+                //     var res = await fetch(cfg.webhookUrl + '/transactions', {
+                //         method: 'GET',
+                //         headers: { 'X-Api-Key': cfg.apiKey }
+                //     });
+                //     var json = await res.json();
+                //     var total = json.data.reduce(function(s, t){ return s + t.amount; }, 0);
+                //     return { total: total, rawData: json };
+                // }
+
+                // ── E-WALLET ────────────────────────────────────────────────
+                // if (metode === 'E-Wallet') {
+                //     // Struktur bervariasi tergantung provider (GoPay, OVO, Dana)
+                //     // Sesuaikan dengan dokumentasi API masing-masing provider
+                //     var res = await fetch(cfg.webhookUrl, {
+                //         headers: { 'Authorization': cfg.apiKey }
+                //     });
+                //     var json = await res.json();
+                //     return { total: json.settlement_amount, rawData: json };
+                // }
+
+                return null; // Belum ada implementasi untuk metode ini
+            } catch(e) {
+                console.warn('[Integrasi ' + metode + '] Gagal fetch:', e.message);
+                return null;
+            }
+        }
+
+        // ── Coba auto-verifikasi semua metode yang aktif (dipanggil opsional) ──
+        async function clerekAutoVerifikasi() {
+            if (!clerekState.shiftMulai) return;
+            var mulai   = clerekState.shiftMulai;
+            var selesai = clerekState.shiftSelesai || Date.now();
+            var adaPerubahan = false;
+
+            var metodeList = ['Kartu', 'QRIS', 'E-Wallet'];
+            for (var i = 0; i < metodeList.length; i++) {
+                var m = metodeList[i];
+                var cfg = clerekIntegrations[m];
+                if (!cfg || !cfg.enabled) continue;
+
+                var result = await fetchVerifikasiEksternal(m, mulai, selesai);
+                if (result !== null) {
+                    // Tandai terverifikasi otomatis jika total cocok (toleransi ±100 perak)
+                    var breakdown = clerekState.shiftMulai
+                        ? hitungOmzetPerMetode(mulai, selesai)
+                        : { Kartu:0, QRIS:0, 'E-Wallet':0, Hutang:0, Tunai:0, total:0 };
+                    var nilaIPOS = breakdown[m] || 0;
+                    if (Math.abs(result.total - nilaIPOS) <= 100) {
+                        clerekState.verifikasiNonTunai[m] = true;
+                        adaPerubahan = true;
+                    }
+                }
+            }
+
+            if (adaPerubahan) {
+                var bod = document.getElementById('clerek-body');
+                if (bod && clerekState.tab === 'shift') bod.innerHTML = getClerekShiftHTML();
+                showToast('Verifikasi otomatis berhasil untuk metode yang sudah terhubung.', 'success');
+            }
+        }
+
+        // ── Simpan konfigurasi satu integrasi dari form Settings ──
+        function saveIntegrasiFitur(metode) {
+            var cfg = clerekIntegrations[metode];
+            if (!cfg) return;
+            var keyPfx = 'intg-' + metode.toLowerCase().replace(/\s/g,'-').replace(/\//g,'');
+            var provEl = document.getElementById(keyPfx + '-provider');
+            var keyEl  = document.getElementById(keyPfx + '-apikey');
+            var urlEl  = document.getElementById(keyPfx + '-url');
+            var enaEl  = document.getElementById(keyPfx + '-enabled');
+            if (provEl) cfg.provider   = provEl.value.trim() || null;
+            if (keyEl)  cfg.apiKey     = keyEl.value.trim()  || null;
+            if (urlEl)  cfg.webhookUrl = urlEl.value.trim()  || null;
+            if (enaEl)  cfg.enabled    = enaEl.checked && !!(cfg.apiKey || cfg.webhookUrl);
+            saveIntegrasiToGAS()
+                .then(function(){ showToast('Konfigurasi integrasi ' + cfg.nama + ' disimpan.', 'success'); })
+                .catch(function(){ showToast('Tersimpan secara lokal (GAS tidak tersambung).', 'info'); });
+            renderContent(); // refresh agar badge status ikut update
+        }
+
+        // ── Render panel integrasi untuk Pengaturan (admin) ──────────
+        function getIntegrasiSettingsHTML() {
+            var metodeList = [
+                { key: 'Kartu',    icon: 'ph-credit-card',          color: '#2563eb', bg: '#eff6ff', bdr: '#bfdbfe',
+                  deskripsi: 'Hubungkan ke API settlement mesin EDC (BCA, Mandiri, BNI, dll) agar total Kartu ATM terverifikasi otomatis setiap tutup shift.' },
+                { key: 'QRIS',     icon: 'ph-qr-code',              color: '#7c3aed', bg: '#faf5ff', bdr: '#e9d5ff',
+                  deskripsi: 'Hubungkan ke dashboard merchant QRIS (GoPay, OVO Business, Dana, dll) agar mutasi QRIS bisa dibandingkan otomatis.' },
+                { key: 'E-Wallet', icon: 'ph-device-mobile-camera', color: '#ea580c', bg: '#fff7ed', bdr: '#fed7aa',
+                  deskripsi: 'Hubungkan ke API e-wallet merchant (GoPay/OVO/Dana) untuk sinkronisasi otomatis riwayat transaksi.' },
+                { key: 'Hutang',   icon: 'ph-hand-coins',           color: '#dc2626', bg: '#fff5f5', bdr: '#fecaca',
+                  deskripsi: 'Hutang/Kasbon diverifikasi manual via nota fisik — tidak memerlukan integrasi API.' },
+            ];
+
+            var cards = metodeList.map(function(m) {
+                var cfg = clerekIntegrations[m.key];
+                var isEnabled = cfg.enabled;
+                var isHutang  = m.key === 'Hutang';
+                var keyPfx    = 'intg-' + m.key.toLowerCase().replace(/\s/g,'-').replace(/\//g,'');
+
+                var statusBadge = isHutang
+                    ? '<span style="font-size:10px;padding:2px 8px;border-radius:999px;background:#f3f4f6;color:#6b7280;font-weight:600;">Manual</span>'
+                    : (isEnabled
+                        ? '<span style="font-size:10px;padding:2px 8px;border-radius:999px;background:#dcfce7;color:#15803d;font-weight:600;">● Aktif</span>'
+                        : '<span style="font-size:10px;padding:2px 8px;border-radius:999px;background:#fef3c7;color:#92400e;font-weight:600;">○ Belum dikonfigurasi</span>');
+
+                var fields = isHutang ? '' :
+                    '<div style="margin-top:12px;display:flex;flex-direction:column;gap:8px;">'
+                    // Toggle aktif
+                    + '<label style="display:flex;align-items:center;justify-content:space-between;font-size:12px;font-weight:600;color:#374151;">'
+                    + '<span><i class="ph ph-plug" style="margin-right:4px;color:' + m.color + ';"></i>Aktifkan integrasi otomatis</span>'
+                    + '<input type="checkbox" id="' + keyPfx + '-enabled" ' + (isEnabled ? 'checked' : '') + ' '
+                    + 'style="width:16px;height:16px;accent-color:' + m.color + ';cursor:pointer;" '
+                    + 'onchange="document.getElementById(\'' + keyPfx + '-fields\').style.display=this.checked?\'flex\':\'none\'" />'
+                    + '</label>'
+                    // Field detail — tampil hanya jika toggle aktif
+                    + '<div id="' + keyPfx + '-fields" style="display:' + (isEnabled ? 'flex' : 'none') + ';flex-direction:column;gap:6px;">'
+                    + '<div><label style="font-size:11px;color:#6b7280;font-weight:600;display:block;margin-bottom:2px;">Provider / Nama Bank</label>'
+                    + '<input id="' + keyPfx + '-provider" type="text" value="' + (cfg.provider || '') + '" placeholder="Cth: BCA EDC / GoPay Merchant" '
+                    + 'style="width:100%;padding:6px 10px;border:1px solid #e5e7eb;border-radius:8px;font-size:12px;box-sizing:border-box;" /></div>'
+                    + '<div><label style="font-size:11px;color:#6b7280;font-weight:600;display:block;margin-bottom:2px;">API Key / Token</label>'
+                    + '<input id="' + keyPfx + '-apikey" type="password" value="' + (cfg.apiKey || '') + '" placeholder="sk_live_xxxxxxxxxxxx" '
+                    + 'style="width:100%;padding:6px 10px;border:1px solid #e5e7eb;border-radius:8px;font-size:12px;box-sizing:border-box;" /></div>'
+                    + '<div><label style="font-size:11px;color:#6b7280;font-weight:600;display:block;margin-bottom:2px;">Webhook / Endpoint URL</label>'
+                    + '<input id="' + keyPfx + '-url" type="url" value="' + (cfg.webhookUrl || '') + '" placeholder="https://api.provider.com/v1" '
+                    + 'style="width:100%;padding:6px 10px;border:1px solid #e5e7eb;border-radius:8px;font-size:12px;box-sizing:border-box;" /></div>'
+                    + '</div>'
+                    + '<button onclick="saveIntegrasiFitur(\'' + m.key + '\')" '
+                    + 'style="margin-top:4px;padding:7px 14px;background:' + m.color + ';color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;align-self:flex-start;">'
+                    + '<i class="ph ph-floppy-disk" style="margin-right:4px;"></i>Simpan</button>'
+                    + '</div>';
+
+                return '<div style="background:' + (isEnabled && !isHutang ? m.bg : '#fafafa') + ';border:1.5px solid ' + (isEnabled && !isHutang ? m.bdr : '#e5e7eb') + ';border-radius:12px;padding:14px 16px;transition:border .2s;">'
+                    + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">'
+                    + '<span style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:#1f2937;">'
+                    + '<i class="ph ' + m.icon + '" style="font-size:18px;color:' + m.color + ';"></i>' + cfg.nama + '</span>'
+                    + statusBadge + '</div>'
+                    + '<p style="font-size:11px;color:#6b7280;line-height:1.5;margin:0 0 2px;">' + m.deskripsi + '</p>'
+                    + fields
+                    + '</div>';
+            }).join('');
+
+            return '<div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6" style="margin-top:0;">'
+                + '<div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:6px;">'
+                + '<div>'
+                + '<h2 class="text-lg font-semibold text-gray-800 flex items-center gap-2" style="margin-bottom:2px;">'
+                + '<i class="ph ph-plugs-connected text-indigo-500 text-xl"></i> Integrasi Verifikasi Non-Tunai'
+                + '</h2>'
+                + '<p style="font-size:12px;color:#6b7280;">Hubungkan metode non-tunai ke API eksternal agar verifikasi bisa dilakukan otomatis saat tutup shift. <strong>Saat ini semua masih manual</strong> — konfigurasi di sini disiapkan untuk integrasi mendatang.</p>'
+                + '</div>'
+                + '<span style="font-size:10px;background:#ede9fe;color:#5b21b6;padding:3px 10px;border-radius:999px;font-weight:700;white-space:nowrap;flex-shrink:0;">Beta / Siap Integrasi</span>'
+                + '</div>'
+                + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;margin-top:14px;">'
+                + cards
+                + '</div>'
+                + '<p style="font-size:10px;color:#9ca3af;margin-top:12px;"><i class="ph ph-info" style="margin-right:3px;"></i>'
+                + 'API Key disimpan terenkripsi di Google Spreadsheet. Hubungi developer untuk mengaktifkan endpoint yang belum tersedia.</p>'
+                + '</div>';
+        }
 
         function getClerekHTML() {
             var tabs = [
@@ -7391,6 +7664,69 @@
                     + '</div>';
             }
 
+            // ── Panel checklist verifikasi non-tunai ──────────────────
+            var panelVerifikasi = '';
+            if (clerekState.shiftMulai) {
+                var nonTunaiConfig = [
+                    { key: 'Kartu',    label: 'Kartu ATM (EDC)',  petunjuk: 'Cocokkan angka di POS dengan struk Settlement harian dari mesin EDC.', icon: 'ph-credit-card',          color: '#2563eb', bg: '#eff6ff', border: '#bfdbfe' },
+                    { key: 'QRIS',     label: 'QRIS',             petunjuk: 'Cocokkan angka di POS dengan laporan mutasi/notifikasi dari bank atau dashboard merchant QRIS.', icon: 'ph-qr-code', color: '#7c3aed', bg: '#faf5ff', border: '#e9d5ff' },
+                    { key: 'E-Wallet', label: 'E-Wallet',         petunjuk: 'Cocokkan angka di POS dengan riwayat transaksi di aplikasi e-wallet (GoPay, OVO, Dana, dll).', icon: 'ph-device-mobile-camera', color: '#ea580c', bg: '#fff7ed', border: '#fed7aa' },
+                    { key: 'Hutang',   label: 'Hutang / Kasbon',  petunjuk: 'Pastikan nominal di POS sama dengan nota fisik yang ditandatangani pelanggan atau catatan buku bon.', icon: 'ph-hand-coins', color: '#dc2626', bg: '#fff5f5', border: '#fecaca' },
+                ];
+
+                var adaNilaiNonTunai = nonTunaiConfig.some(function(m){ return (omzetBreakdown[m.key] || 0) > 0; });
+                var semuaTercentang = nonTunaiConfig.filter(function(m){ return (omzetBreakdown[m.key] || 0) > 0; })
+                                                    .every(function(m){ return clerekState.verifikasiNonTunai[m.key]; });
+
+                var checklistRows = nonTunaiConfig.map(function(m) {
+                    var val = omzetBreakdown[m.key] || 0;
+                    var checked = clerekState.verifikasiNonTunai[m.key];
+                    var disabled = val === 0;
+                    var rowBg    = disabled ? '#f9fafb' : (checked ? '#f0fdf4' : m.bg);
+                    var rowBdr   = disabled ? '#e5e7eb' : (checked ? '#86efac' : m.border);
+                    var opacRow  = disabled ? 'opacity:0.45;' : '';
+                    return '<div style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;background:' + rowBg + ';border:1px solid ' + rowBdr + ';border-radius:10px;' + opacRow + 'transition:background .2s;">'
+                        + '<button onclick="' + (disabled ? '' : "clerekToggleVerifikasi('" + m.key + "')") + '" '
+                        + 'style="flex-shrink:0;width:22px;height:22px;border-radius:6px;border:2px solid ' + (checked && !disabled ? '#16a34a' : '#d1d5db') + ';background:' + (checked && !disabled ? '#16a34a' : '#fff') + ';display:flex;align-items:center;justify-content:center;cursor:' + (disabled ? 'not-allowed' : 'pointer') + ';transition:all .15s;" '
+                        + (disabled ? 'disabled' : '') + '>'
+                        + (checked && !disabled ? '<i class="ph ph-check" style="font-size:13px;color:#fff;font-weight:700;"></i>' : '')
+                        + '</button>'
+                        + '<div style="flex:1;min-width:0;">'
+                        + '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">'
+                        + '<span style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:' + (disabled ? '#9ca3af' : '#374151') + ';">'
+                        + '<i class="ph ' + m.icon + '" style="font-size:14px;color:' + (disabled ? '#d1d5db' : m.color) + ';"></i>' + m.label + '</span>'
+                        + '<span style="font-size:13px;font-weight:700;color:' + (val > 0 ? (checked ? '#16a34a' : m.color) : '#d1d5db') + ';">' + formatRp(val) + '</span>'
+                        + '</div>'
+                        + (!disabled ? '<p style="font-size:10px;color:#6b7280;margin-top:3px;line-height:1.4;">' + m.petunjuk + '</p>' : '')
+                        + (disabled ? '<p style="font-size:10px;color:#d1d5db;margin-top:2px;">Tidak ada transaksi metode ini.</p>' : '')
+                        + '</div>'
+                        + '</div>';
+                }).join('');
+
+                var headerVerif = adaNilaiNonTunai
+                    ? (semuaTercentang
+                        ? '<span style="font-size:10px;background:#dcfce7;color:#15803d;padding:2px 8px;border-radius:999px;font-weight:700;display:inline-flex;align-items:center;gap:4px;"><i class="ph ph-check-circle"></i> Semua terverifikasi</span>'
+                        : '<span style="font-size:10px;background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:999px;font-weight:700;display:inline-flex;align-items:center;gap:4px;"><i class="ph ph-warning"></i> Belum semua dicek</span>')
+                    : '<span style="font-size:10px;color:#9ca3af;">Tidak ada transaksi non-tunai.</span>';
+
+                panelVerifikasi = '<div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5">'
+                    + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px;">'
+                    + '<h3 class="font-bold text-gray-800 flex items-center gap-2" style="font-size:15px;"><i class="ph ph-clipboard-text text-orange-500 text-lg"></i> Verifikasi Non-Tunai</h3>'
+                    + '<div style="display:flex;align-items:center;gap:8px;">'
+                    + headerVerif
+                    // Tombol Cek Otomatis — tampil hanya jika ada integrasi aktif
+                    + (nonTunaiConfig.some(function(m){ return clerekIntegrations[m.key] && clerekIntegrations[m.key].enabled; })
+                        ? '<button onclick="clerekAutoVerifikasi()" style="display:flex;align-items:center;gap:6px;padding:5px 12px;background:#4f46e5;color:#fff;border:none;border-radius:8px;font-size:11px;font-weight:600;cursor:pointer;">'
+                          + '<i class="ph ph-plugs-connected" style="font-size:13px;"></i>Cek Otomatis</button>'
+                        : '<a href="#" onclick="setActiveMenu(\'Pengaturan\');return false;" style="font-size:10px;color:#6b7280;text-decoration:underline;text-decoration-style:dotted;">+ Hubungkan API</a>')
+                    + '</div>'
+                    + '</div>'
+                    + '<p style="font-size:11px;color:#6b7280;margin-bottom:10px;">Centang setiap metode setelah Anda mencocokkan angkanya dengan sumber eksternal (aplikasi / struk / notif bank).</p>'
+                    + '<div style="display:flex;flex-direction:column;gap:8px;">' + checklistRows + '</div>'
+                    + (adaNilaiNonTunai && !semuaTercentang && aktif ? '<div style="margin-top:10px;padding:8px 12px;background:#fef9c3;border:1px solid #fde68a;border-radius:8px;font-size:11px;color:#713f12;"><i class="ph ph-info mr-1"></i>Verifikasi non-tunai disarankan sebelum mengakhiri shift.</div>' : '')
+                    + '</div>';
+            }
+
             // Panel kas akhir (hanya saat shift aktif)
             // Admin non-ambil-alih: hanya lihat info, tidak bisa isi
             var panelKasAkhir = '';
@@ -7436,7 +7772,8 @@
                 + panelKasAkhir
                 + '</div></div>';
 
-            return '<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">' + statusPanel + kasPanel + '</div>';
+            return '<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">' + statusPanel + kasPanel + '</div>'
+                + (panelVerifikasi ? '<div class="mt-4">' + panelVerifikasi + '</div>' : '');
         }
 
                 function clerekRefreshKas() {
@@ -7570,6 +7907,8 @@
                 var kasAkhir     = clerekState.kasAkhir || 0;
                 var kasAkhirEstimasi = clerekState.kasAwal + omzetTunai + mutasiShiftVal;
                 var selisihKas   = kasAkhir - kasAkhirEstimasi;
+                // Snapshot status verifikasi non-tunai saat tutup shift
+                var snapshotVerif = Object.assign({}, clerekState.verifikasiNonTunai);
                 if (GAS_URL && clerekState.shiftId) {
                     gasPost({ action: 'akhiriShift',
                         idShift: clerekState.shiftId,
@@ -7587,10 +7926,13 @@
                             omzetTunai: omzetTunai,   // tunai saja (untuk perhitungan selisih)
                             mutasiKas: mutasiShiftVal, // net mutasi kas manual shift ini
                             omzetBreakdown: bdShift,   // breakdown per metode
+                            verifikasiNonTunai: snapshotVerif, // status checklist non-tunai
                             status: 'selesai'
                         };
                         clerekState.riwayatShift.unshift(rec);
                         clerekState.shiftSelesai = selesai;
+                        // Reset checklist verifikasi untuk shift berikutnya
+                        clerekState.verifikasiNonTunai = { Kartu: false, QRIS: false, 'E-Wallet': false, Hutang: false };
                         // Jika admin yang menutup shift, otomatis lepas ambil alih
                         if (adminAmbilAlih) {
                             setAdminAmbilAlih(false);
@@ -7611,10 +7953,13 @@
                         omzetTunai: omzetTunai,
                         mutasiKas: mutasiShiftVal,
                         omzetBreakdown: bdShift,
+                        verifikasiNonTunai: snapshotVerif, // status checklist non-tunai
                         status: 'selesai'
                     };
                     clerekState.riwayatShift.unshift(rec);
                     clerekState.shiftSelesai = selesai;
+                    // Reset checklist verifikasi untuk shift berikutnya
+                    clerekState.verifikasiNonTunai = { Kartu: false, QRIS: false, 'E-Wallet': false, Hutang: false };
                     if (adminAmbilAlih) { setAdminAmbilAlih(false); }
                     renderSidebarMenu();
                     renderContent();
@@ -7858,6 +8203,25 @@
                         }
                     }
 
+                    // Baris status verifikasi non-tunai (jika ada breakdown & data verif)
+                    var verifInfo = '';
+                    if (r.omzetBreakdown && r.verifikasiNonTunai) {
+                        var vbd = r.omzetBreakdown;
+                        var nonTunaiKeys = ['Kartu', 'QRIS', 'E-Wallet', 'Hutang'];
+                        var adaNonTunai = nonTunaiKeys.some(function(k){ return (vbd[k] || 0) > 0; });
+                        if (adaNonTunai) {
+                            var vItems = nonTunaiKeys.filter(function(k){ return (vbd[k]||0) > 0; }).map(function(k){
+                                var ok = r.verifikasiNonTunai[k];
+                                return '<span style="font-size:10px;padding:1px 7px;border-radius:999px;font-weight:600;background:' + (ok?'#dcfce7':'#fef3c7') + ';color:' + (ok?'#15803d':'#92400e') + ';">'
+                                    + (ok ? '✓' : '○') + ' ' + k + '</span>';
+                            }).join('');
+                            verifInfo = '<div class="col-span-3 mt-1 p-2 bg-gray-50 rounded-lg">'
+                                + '<p style="font-size:10px;font-weight:600;color:#6b7280;margin-bottom:4px;">Verifikasi Non-Tunai:</p>'
+                                + '<div style="display:flex;flex-wrap:wrap;gap:4px;">' + vItems + '</div>'
+                                + '</div>';
+                        }
+                    }
+
                     return '<div class="bg-white rounded-xl border border-gray-100 p-4 shadow-sm">'
                         + '<div class="flex justify-between items-start mb-3">'
                         +   '<div>'
@@ -7883,6 +8247,7 @@
                         +     '<p class="text-gray-400 mt-0.5" style="font-size:10px;">Estimasi: ' + formatRp(kasAkhirEstimasi) + '</p>'
                         +   '</div>'
                         +   bdInfo
+                        +   verifInfo
                         + '</div>'
                         + '</div>';
                 }).join('');
@@ -8139,6 +8504,75 @@
                 y += 4;
             }
             y += 3;
+
+            // ── SECTION: Status Verifikasi Non-Tunai ─────────────────────
+            var nonTunaiPdfList = [
+                { label: 'Kartu ATM (EDC)', key: 'Kartu',    petunjuk: 'Struk Settlement mesin EDC',          nilai: bd.Kartu        || 0 },
+                { label: 'QRIS',            key: 'QRIS',     petunjuk: 'Mutasi/notifikasi bank atau dashboard', nilai: bd.QRIS         || 0 },
+                { label: 'E-Wallet',        key: 'E-Wallet', petunjuk: 'Riwayat transaksi aplikasi e-wallet',  nilai: bd['E-Wallet']  || 0 },
+                { label: 'Hutang/Kasbon',   key: 'Hutang',   petunjuk: 'Nota fisik atau buku bon pelanggan',   nilai: bd.Hutang       || 0 },
+            ];
+            var adaNonTunaiPdf = nonTunaiPdfList.some(function(m){ return m.nilai > 0; });
+            if (adaNonTunaiPdf) {
+                doc.setDrawColor(200); doc.setLineWidth(0.2);
+                doc.line(lm, y, pageW - rm, y);
+                y += 6;
+
+                doc.setFontSize(10); doc.setFont(undefined, 'bold'); doc.setTextColor(20);
+                doc.text('Checklist Verifikasi Non-Tunai', lm, y);
+                y += 3;
+                doc.setFontSize(8); doc.setFont(undefined, 'normal'); doc.setTextColor(120);
+                doc.text('Centang pada saat tutup shift menunjukkan kasir telah memverifikasi sumber eksternal.', lm, y + 4);
+                y += 9;
+
+                // Header checklist
+                doc.setFillColor(240, 240, 240);
+                doc.rect(lm, y - 4, cw, 7, 'F');
+                doc.setFontSize(8); doc.setFont(undefined, 'bold'); doc.setTextColor(60);
+                doc.text('Metode', lm + 4, y);
+                doc.text('Sumber Verifikasi', lm + 60, y);
+                doc.text('Nominal', pageW - rm - 26, y);
+                doc.text('Status', pageW - rm, y, { align: 'right' });
+                y += 7;
+                doc.setDrawColor(200); doc.setLineWidth(0.2);
+                doc.line(lm, y - 1.5, pageW - rm, y - 1.5);
+
+                var verifData = r.verifikasiNonTunai || {};
+                nonTunaiPdfList.filter(function(m){ return m.nilai > 0; }).forEach(function(m) {
+                    var ok = verifData[m.key] === true;
+                    // Kotak centang
+                    doc.setDrawColor(ok ? 22 : 200); doc.setLineWidth(0.5);
+                    doc.rect(lm + 4, y - 3.5, 5, 5);
+                    if (ok) {
+                        doc.setTextColor(22, 163, 74); doc.setFontSize(8); doc.setFont(undefined, 'bold');
+                        doc.text('v', lm + 5.2, y + 0.5);
+                    }
+                    // Label metode
+                    doc.setFontSize(9); doc.setFont(undefined, 'bold'); doc.setTextColor(20);
+                    doc.text(m.label, lm + 12, y);
+                    // Sumber verifikasi
+                    doc.setFontSize(7.5); doc.setFont(undefined, 'normal'); doc.setTextColor(100);
+                    doc.text(m.petunjuk, lm + 60, y);
+                    // Nominal
+                    doc.setFontSize(9); doc.setFont(undefined, 'bold'); doc.setTextColor(20);
+                    doc.text(formatRp(m.nilai), pageW - rm - 26, y);
+                    // Status badge
+                    doc.setFontSize(8.5); doc.setFont(undefined, 'bold');
+                    doc.setTextColor(ok ? 22 : 180, ok ? 163 : 140, ok ? 74 : 30);
+                    doc.text(ok ? 'VERIFIED' : 'BELUM CEK', pageW - rm, y, { align: 'right' });
+                    y += 9;
+                    doc.setDrawColor(230); doc.setLineWidth(0.1);
+                    doc.line(lm, y - 1.5, pageW - rm, y - 1.5);
+                });
+
+                var semuaVerif = nonTunaiPdfList.filter(function(m){ return m.nilai > 0; })
+                                               .every(function(m){ return verifData[m.key] === true; });
+                y += 2;
+                doc.setFontSize(8.5); doc.setFont(undefined, 'bold');
+                doc.setTextColor(semuaVerif ? 22 : 180, semuaVerif ? 163 : 140, semuaVerif ? 74 : 30);
+                doc.text(semuaVerif ? '✓ Semua metode non-tunai sudah diverifikasi.' : '⚠ Ada metode non-tunai yang belum diverifikasi saat tutup shift.', lm, y);
+                y += 7;
+            }
 
             // ── FOOTER ───────────────────────────────────────────
             doc.setDrawColor(200); doc.setLineWidth(0.2);
